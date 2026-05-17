@@ -26,6 +26,8 @@ Prints current vs ceiling for each budget. Fails (non-zero exit) if any ceiling 
 ### In CI
 `.github/workflows/loc-budget.yml`, `deps-budget.yml`, `env-budget.yml`, `size-check.yml` re-run the checks on every PR. Failed budget = blocked merge.
 
+**Exception**: the per-PR 400-LOC ceiling applies to feature PRs targeting `develop`. Release PRs targeting `main` (which aggregate already-individually-vetted feature PRs from develop) are exempt — the check exits with `delta=0` when the PR base is `main`. The total-LOC ceiling (8000) and the dep/env-var ceilings still apply.
+
 ## How to count
 
 | Budget | Counting method |
