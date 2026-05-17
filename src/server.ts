@@ -5,11 +5,15 @@ import { registerAuth } from "./auth.js";
 import { type Config, loadConfig } from "./config.js";
 import { type PolarisDb, openDb } from "./db.js";
 import { ingest } from "./ingest/ingest.js";
+import { type TimeRange, aggregate, resolveRange } from "./metrics/aggregator.js";
+import { loadPricing } from "./metrics/pricing.js";
 
 const IngestBodySchema = z.object({
   sessionFile: z.string().min(1),
   content: z.string(),
 });
+
+const RangeSchema = z.enum(["today", "7d", "30d", "all"]).default("today");
 
 export interface BuildResult {
   app: FastifyInstance;
@@ -46,6 +50,20 @@ export async function buildServer(): Promise<BuildResult> {
     }
     const result = ingest(db, parsed.data.sessionFile, parsed.data.content);
     return reply.send(result);
+  });
+
+  app.get("/v1/metrics", { config: { requireAuth: true } }, async (request, reply) => {
+    const query = request.query as { range?: string };
+    const parsed = RangeSchema.safeParse(query.range);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: "Invalid range. Allowed: today, 7d, 30d, all.",
+      });
+    }
+    const range: TimeRange = parsed.data;
+    const { fromMs, toMs } = resolveRange(range);
+    const pricing = loadPricing();
+    return reply.send(aggregate(db, range, fromMs, toMs, pricing));
   });
 
   return { app, config, db };

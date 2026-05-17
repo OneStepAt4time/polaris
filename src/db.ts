@@ -17,6 +17,7 @@ export interface EventRow {
 export interface PolarisDb {
   insertEvent(e: EventRow): boolean;
   countEvents(): number;
+  getEventsInRange(fromMs: number, toMs: number): EventRow[];
   close(): void;
 }
 
@@ -67,6 +68,13 @@ export function openDb(path: string): PolarisDb {
       @cacheReadTokens, @cacheCreationTokens, @rawCostUsd)`,
   );
   const countStmt = db.prepare("SELECT COUNT(*) AS n FROM events");
+  const rangeStmt = db.prepare(
+    `SELECT request_id AS requestId, session_file AS sessionFile, ts_ms AS tsMs,
+            model, input_tokens AS inputTokens, output_tokens AS outputTokens,
+            cache_read_tokens AS cacheReadTokens, cache_creation_tokens AS cacheCreationTokens,
+            raw_cost_usd AS rawCostUsd
+     FROM events WHERE ts_ms >= ? AND ts_ms <= ? ORDER BY ts_ms ASC`,
+  );
 
   return {
     insertEvent: (e: EventRow): boolean => {
@@ -76,6 +84,9 @@ export function openDb(path: string): PolarisDb {
     countEvents: (): number => {
       const row = countStmt.get() as { n: number };
       return row.n;
+    },
+    getEventsInRange: (fromMs: number, toMs: number): EventRow[] => {
+      return rangeStmt.all(fromMs, toMs) as EventRow[];
     },
     close: (): void => {
       db.close();
