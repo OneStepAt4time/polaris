@@ -1,0 +1,57 @@
+name: Bug report
+description: Report something that doesn't work as documented
+title: "fix: "
+labels: ["bug", "status: triage"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      placeholder: A clear description of the unexpected behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      placeholder: What you thought would happen, ideally citing CHARTER.md or docs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: Step-by-step. Include `curl` commands, exact URL, exact CLI invocations.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Polaris version
+      placeholder: "v0.X.Y or commit SHA"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux x64
+        - Linux arm64
+        - macOS x64
+        - macOS arm64
+        - Windows x64
+        - Docker
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / error output
+      render: shell

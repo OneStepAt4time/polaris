@@ -1,0 +1,54 @@
+name: ADR proposal (scope or architecture change)
+description: Propose a change to a CHARTER.md decision, scope boundary, or architectural pattern
+title: "ADR proposal: "
+labels: ["adr", "needs-human", "status: triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template ONLY when proposing to change:
+        - A CHARTER.md decision (scope, architecture, technology choice).
+        - An existing ADR in `docs/adr/`.
+        - A budget ceiling (LOC, deps, env vars).
+
+        This is the ONLY legitimate path to bypass a refused-list item or hard rule.
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose to change
+      description: Be specific. Cite the existing rule/ADR/charter section you want to amend.
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation — what concrete problem prompts this?
+      description: NOT "it would be nice". Real evidence. User report, hard blocker, measurable cost.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What did you try first within current scope? Why didn't it work?
+    validations:
+      required: true
+
+  - type: textarea
+    id: consequences
+    attributes:
+      label: Consequences if accepted
+      description: What grows? What costs more? What new failure modes appear?
+    validations:
+      required: true
+
+  - type: textarea
+    id: rollback
+    attributes:
+      label: How would we walk this back if it fails?
+      description: Every architectural change should have a documented exit path.
+    validations:
+      required: true

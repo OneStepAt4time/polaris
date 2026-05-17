@@ -1,0 +1,68 @@
+name: Charter check
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  charter-citation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: PR body must cite a CHARTER.md section
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if [ -z "$PR_BODY" ]; then
+            echo "::error::PR body is empty. Fill in .github/PULL_REQUEST_TEMPLATE.md."
+            exit 1
+          fi
+
+          # Charter citation: must match "CHARTER.md section: §N" where N is a number
+          if echo "$PR_BODY" | grep -qiE 'CHARTER\.md section:\s*§[0-9]+'; then
+            echo "✓ PR body cites a CHARTER.md section."
+          else
+            echo "::error::PR body must cite a CHARTER.md section."
+            echo "::error::Add a line like: 'CHARTER.md section: §3'"
+            echo "::error::If your change does not trace to a charter section, it should not be a PR."
+            echo "::error::Open a needs-human issue instead."
+            exit 1
+          fi
+
+      - name: Anti-Aegis checklist must be present
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          REQUIRED_PHRASES=(
+            "No new abstractions"
+            "No half-wired files"
+            "No scaffolding for deferred phases"
+            "No \`TODO: later\`"
+          )
+          MISSING=0
+          for phrase in "${REQUIRED_PHRASES[@]}"; do
+            if ! echo "$PR_BODY" | grep -qF "$phrase"; then
+              echo "::error::Missing anti-Aegis checklist item: $phrase"
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" -ne 0 ]; then
+            echo "::error::PR body is missing required anti-Aegis checklist items."
+            echo "::error::Use the full template at .github/PULL_REQUEST_TEMPLATE.md."
+            exit 1
+          fi
+          echo "✓ Anti-Aegis checklist present."
+
+      - name: Verification section must be filled
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # "Verification" section must have a code block with at least 1 non-comment line
+          # or a "Result:" line that isn't the placeholder
+          if echo "$PR_BODY" | grep -qE '^\*\*Result\*\*:\s+\S+'; then
+            echo "✓ Verification section appears filled."
+          else
+            echo "::warning::Verification section may be incomplete. Reviewer will confirm."
+          fi
