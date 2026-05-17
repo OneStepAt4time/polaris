@@ -21,9 +21,20 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           if [ ! -d "src" ]; then
             echo "src/ does not yet exist — skipping size gate"
+            echo "delta=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Release PRs (develop → main) aggregate many feature PRs already
+          # passed through the ceiling individually — see .claude/rules/budgets.md
+          # §"How budgets are enforced". The 400-LOC ceiling applies to feature
+          # PRs into develop, not to the release merge that promotes them.
+          if [ "$BASE_REF" = "main" ]; then
+            echo "Release PR (base=main) — size ceiling does not apply"
             echo "delta=0" >> "$GITHUB_OUTPUT"
             exit 0
           fi
