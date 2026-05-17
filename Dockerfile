@@ -18,8 +18,8 @@ RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
-# Copy source and compile.
-COPY tsconfig.json tsconfig.build.json ./
+# Copy source and compile (TS → dist/, Astro → dist/ui/).
+COPY tsconfig.json tsconfig.build.json astro.config.mjs ./
 COPY src ./src
 COPY pricing ./pricing
 RUN npm run build
