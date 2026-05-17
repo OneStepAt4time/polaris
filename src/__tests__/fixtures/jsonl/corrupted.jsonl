@@ -1,0 +1,4 @@
+{"timestamp":"2026-05-15T14:00:00.000Z","type":"assistant","message":{"model":"claude-sonnet-4-5","usage":{"input_tokens":1000,"output_tokens":500}},"requestId":"req_300","uuid":"u300"}
+{this is not valid json
+{"timestamp":"2026-05-15T14:01:00.000Z","type":"user","message":{"content":"a user message without usage"},"uuid":"u-user"}
+{"timestamp":"2026-05-15T14:02:00.000Z","type":"assistant","message":{"model":"claude-sonnet-4-5","usage":{"input_tokens":2000,"output_tokens":1000}},"requestId":"req_301","uuid":"u301"}

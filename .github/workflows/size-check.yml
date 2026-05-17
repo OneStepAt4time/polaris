@@ -28,7 +28,10 @@ jobs:
             exit 0
           fi
 
-          STATS=$(git diff --shortstat "$BASE_SHA"..."$HEAD_SHA" -- 'src/**' 2>/dev/null || echo "")
+          # Exclude src/__tests__/** from the delta — test files are proof of
+          # correctness, not new behavior, and don't count toward the per-PR
+          # ceiling. See .claude/rules/budgets.md §"What does NOT count".
+          STATS=$(git diff --shortstat "$BASE_SHA"..."$HEAD_SHA" -- 'src/**' ':!src/__tests__/**' 2>/dev/null || echo "")
           if [ -z "$STATS" ]; then
             DELTA=0
           else
@@ -36,7 +39,7 @@ jobs:
             REMOVED=$(echo "$STATS" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' || echo 0)
             DELTA=$((ADDED + REMOVED))
           fi
-          echo "Source delta in src/: $DELTA"
+          echo "Source delta in src/ (excluding tests): $DELTA"
           echo "delta=$DELTA" >> "$GITHUB_OUTPUT"
 
       - name: Enforce 400 LOC ceiling
