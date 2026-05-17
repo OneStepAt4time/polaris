@@ -4,7 +4,41 @@
 
 Polaris is the **self-hosted observatory for your AI coding agents**: see tokens, costs, rate-limits and activity for Claude Code (and others, coming in v2) in a web dashboard inspired by [CCMeter](https://github.com/hmenzagh/CCMeter), with notifications via Telegram, Slack, or Discord — *before* you burn the budget or hit a rate limit.
 
-**Status**: Pre-alpha. Bootstrap phase. Not yet usable.
+**Status**: Pre-alpha (M0 backend in place, UI pending).
+
+---
+
+## Quick start (Docker)
+
+```bash
+docker run --rm \
+  -e POLARIS_AUTH_TOKEN="$(openssl rand -hex 32)" \
+  -v polaris-data:/data \
+  -v ~/.claude:/claude:ro \
+  -p 3000:3000 \
+  ghcr.io/onestepat4time/polaris:latest
+```
+
+Then ingest a JSONL session:
+
+```bash
+TOKEN=...   # the same token you passed via POLARIS_AUTH_TOKEN
+curl -X POST http://localhost:3000/v1/ingest \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"sessionFile\":\"my-session\",\"content\":$(jq -Rs . < ~/.claude/projects/<some>.jsonl)}"
+```
+
+And query metrics:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:3000/v1/metrics?range=today" | jq
+```
+
+`/health` is unauthenticated for liveness probes; everything under `/v1/*` requires the bearer token.
+
+The `:latest` tag tracks the most recent release; pin a specific tag (e.g. `:0.1.0`) in production.
 
 ---
 
