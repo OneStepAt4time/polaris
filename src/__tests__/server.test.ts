@@ -7,6 +7,7 @@ describe("server", () => {
 
   beforeAll(async () => {
     process.env.POLARIS_AUTH_TOKEN = "test-token-1234";
+    process.env.POLARIS_DB_PATH = ":memory:";
     const built = await buildServer();
     app = built.app;
     await app.ready();

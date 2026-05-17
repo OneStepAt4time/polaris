@@ -7,6 +7,8 @@ const ConfigSchema = z.object({
   host: z.string().default("127.0.0.1"),
   // why: HTTP port. Default 3000.
   port: z.coerce.number().int().positive().default(3000),
+  // why: SQLite file path. Use ":memory:" for ephemeral testing (ADR-0002).
+  dbPath: z.string().default("./polaris.db"),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -16,6 +18,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     authToken: env.POLARIS_AUTH_TOKEN,
     host: env.POLARIS_HOST,
     port: env.POLARIS_PORT,
+    dbPath: env.POLARIS_DB_PATH,
   });
   if (!parsed.success) {
     const issues = parsed.error.issues

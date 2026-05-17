@@ -31,7 +31,7 @@ Prints current vs ceiling for each budget. Fails (non-zero exit) if any ceiling 
 | Budget | Counting method |
 |---|---|
 | Total LOC | `cloc src/ --exclude-dir=__tests__` |
-| PR delta | `git diff --shortstat <base>..<head> -- 'src/**' | awk '{print $4 + $6}'` |
+| PR delta | `git diff --shortstat <base>..<head> -- 'src/**' ':!src/__tests__/**' | awk '{print $4 + $6}'` |
 | Runtime deps | `jq '.dependencies | length' package.json` |
 | Env vars | `grep -c "^\s*export const \w\+ =" src/config.ts` or static AST count |
 
