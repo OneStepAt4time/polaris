@@ -50,6 +50,7 @@ How hard would it be to undo? Cheap / moderate / sticky.
 | [0006](./0006-loc-ceiling.md) | 8000 LOC ceiling for src/ at v1.0 | Accepted |
 | [0007](./0007-jsonl-dedup.md) | JSONL dedup strategy — by `requestId` | Accepted |
 | [0008](./0008-multi-agent-deferred.md) | Multi-agent adapter pattern DEFERRED to v2 | Accepted |
+| [0009](./0009-astro-static-build.md) | Astro static build, Fastify serves the artifact | Accepted (refines 0003) |
 
 ## Superseding an ADR
 

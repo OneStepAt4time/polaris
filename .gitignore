@@ -149,3 +149,6 @@ vite.config.ts.timestamp-*
 *.db-wal
 *.db-shm
 
+# Astro local cache (auto-generated, not committed)
+.astro/
+
