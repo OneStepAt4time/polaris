@@ -1,0 +1,48 @@
+{
+  "name": "@onestepat4time/polaris",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Self-hosted analytics & alerts for AI coding agents.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OneStepAt4time/polaris.git"
+  },
+  "homepage": "https://github.com/OneStepAt4time/polaris#readme",
+  "bugs": {
+    "url": "https://github.com/OneStepAt4time/polaris/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "polaris": "./dist/server.js"
+  },
+  "files": ["dist", "CHARTER.md", "README.md", "LICENSE"],
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "budget-check": "node scripts/budget-check.mjs",
+    "gate": "npm run typecheck && npm run lint && npm run test && npm run budget-check"
+  },
+  "dependencies": {
+    "@fastify/sensible": "^6.0.0",
+    "fastify": "^5.1.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
