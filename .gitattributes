@@ -1,0 +1,24 @@
+# Default behavior: all text files use LF line endings in the repo.
+# This stops Windows checkouts from auto-converting LF→CRLF, which would
+# trip Biome's formatter (it requires LF) and reproduce the cross-platform
+# rot Aegis suffered. CI matrix (Linux + macOS + Windows) must all see the
+# same bytes.
+* text=auto eol=lf
+
+# Windows-only scripts genuinely need CRLF.
+*.{cmd,[cC][mM][dD]} text eol=crlf
+*.{bat,[bB][aA][tT]} text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary files: never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.tar binary
+*.gz binary
+*.db binary
+*.sqlite binary
