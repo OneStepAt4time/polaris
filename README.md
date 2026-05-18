@@ -1,10 +1,12 @@
 # Polaris
 
-> Self-hosted analytics & alerts for your AI coding agents.
+> Self-hosted **lean control plane** for your AI coding agents.
 
-Polaris is the **self-hosted observatory for your AI coding agents**: see tokens, costs, rate-limits and activity for Claude Code (and others, coming in v2) in a web dashboard inspired by [CCMeter](https://github.com/hmenzagh/CCMeter), with notifications via Telegram, Slack, or Discord — *before* you burn the budget or hit a rate limit.
+Polaris lets other agents, tools, or humans **delegate work to Claude Code** (and future agents) through an API that mirrors the interactive TUI: multi-turn conversation, approval handshake, session resume, streamed events. A web dashboard inspired by [CCMeter](https://github.com/hmenzagh/CCMeter) shows tokens, costs and activity live.
 
-**Status**: Pre-alpha (M0 backend in place, UI pending).
+Polaris converges on Aegis's original mission (control plane for Claude Code) but is rebuilt lean from scratch — see [ADR-0010](./docs/adr/0010-acp-control-plane.md) and [CHARTER.md](./CHARTER.md).
+
+**Status**: Alpha. **v0.1.0** ships the observatory baseline (JSONL ingest + metrics + Astro web UI + Docker). The control-plane via ACP rolls out across v0.3-v0.5 (see [roadmap](./CHARTER.md)).
 
 ---
 
@@ -16,8 +18,10 @@ docker run --rm \
   -v polaris-data:/data \
   -v ~/.claude:/claude:ro \
   -p 3000:3000 \
-  ghcr.io/onestepat4time/polaris:latest
+  ghcr.io/onestepat4time/polaris:0.1.0
 ```
+
+> Pin an explicit version tag (`:0.1.0`) for reproducible deployments. A floating `:latest` becomes available from v0.1.1 onward (see this PR's `metadata-action` `latest=true` fix).
 
 Then ingest a JSONL session:
 

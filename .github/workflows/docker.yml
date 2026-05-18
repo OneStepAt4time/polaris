@@ -52,6 +52,12 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=ref,event=branch
             type=sha,prefix=sha-
+          # Always emit :latest on semver tag pushes. The metadata-action's
+          # default `latest=auto` only emits :latest when it can determine
+          # "highest known version", which failed silently on the v0.1.0 push
+          # (the first tag in the repo). Explicit `latest=true` is deterministic.
+          flavor: |
+            latest=true
 
       - name: Build (and push on tag/branch)
         uses: docker/build-push-action@v5

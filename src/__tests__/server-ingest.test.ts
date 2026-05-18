@@ -17,6 +17,7 @@ describe("POST /v1/ingest", () => {
   beforeAll(async () => {
     process.env.POLARIS_AUTH_TOKEN = TOKEN;
     process.env.POLARIS_DB_PATH = ":memory:";
+    process.env.POLARIS_WATCH_DIR = "";
     const built = await buildServer();
     app = built.app;
     await app.ready();
