@@ -3,6 +3,8 @@
 > Charter di partenza. Scritto come farebbe una software house: vision, scope, architettura, stack, regole, roadmap, criteri di rilascio.
 >
 > **Decisioni locked (2026-05-17)**: nome = **Polaris**; repo GitHub = `OneStepAt4time/polaris` (private); UI = **solo web** (no TUI — CCMeter copre già il caso TUI).
+>
+> **Pivot (2026-05-18, ADR-0010)**: dopo il rilascio di v0.1.0 (observatory baseline, M0 chiuso), Polaris adotta **ACP** per diventare un **lean control plane**. Altri agenti, strumenti o umani possono delegare lavoro a Claude Code via API mantenendo la modalità interattiva multi-turn della TUI. Aegis vive in parallelo finché Polaris v1.0 non sostituisce la sua missione (ADR-0023 di Aegis), eseguita sotto la disciplina di Polaris.
 
 ---
 
@@ -24,73 +26,114 @@
 
 ## 2. Product Vision
 
-**One-liner (it)**: Polaris è l'osservatorio self-hosted dei tuoi agenti AI — vedi token, costi, rate-limit e attività di Claude Code (e altri) in una dashboard web ispirata a CCMeter, e ti notifica via Telegram, Slack o Discord prima che bruci il budget o sbatti contro un rate-limit.
+**One-liner (it)**: Polaris è il **control plane self-hosted dei tuoi agenti AI** — altri agenti, strumenti o umani delegano lavoro a Claude Code (e in futuro Codex / Gemini CLI) attraverso Polaris come se aprissero la TUI dell'agente, con approval handshake e multi-turn nativi via ACP, e una dashboard web mostra token, costi, rate-limit e attività live di tutte le sessioni.
 
-**One-liner (en)**: Polaris — self-hosted analytics & alerts for your AI coding agents.
+**One-liner (en)**: Polaris — self-hosted lean control plane for your AI coding agents. Delegate via API, monitor live.
 
-**Target user v0**: developer solo che usa Claude Code (eventualmente Cursor/Codex/Gemini CLI in futuro) e vuole sapere quanto sta spendendo, dove sta sprecando token, quando si avvicina al rate-limit, e quando una sessione fallisce — senza dover stare incollato a un terminale.
+**Target user**:
+- **v0.1**: developer solo che vuole observability dei propri agenti Claude Code (token, costi, rate-limit) da una web UI accessibile remotamente.
+- **v0.3-v0.5**: + altri agenti AI o strumenti che vogliono usare Claude Code come "vibe coder" via API, con multi-turn + approval handshake che riproducono l'esperienza interattiva della TUI.
 
-**Differenze rispetto a CCMeter** (perché esiste Polaris se c'è già):
+**Differenze rispetto a CCMeter e ad Aegis** (perché esiste Polaris):
 
-| Aspetto | CCMeter | Polaris |
-|---|---|---|
-| UI | TUI (terminale locale) | Web UI (remoto, da telefono o desktop) |
-| Notifiche | Nessuna | Telegram + Slack + Discord + Webhook + Email |
-| Agenti supportati | Claude Code only | Claude Code in v1, multi-agent v2 |
-| Dato persistito | `~/.config/ccmeter/history.json` locale | SQLite server, accessibile da più macchine |
-| Deployment | Binary locale | Server self-hosted (Docker o binary) |
-| Soglie / alert | No | Sì (cost-per-day, rate-limit-approaching, session-failed) |
+| Aspetto | CCMeter | Aegis | Polaris (v0.5+) |
+|---|---|---|---|
+| UI | TUI local | Dashboard SaaS-style 366 file | Web UI server-rendered ispirata a CCMeter |
+| Control plane (lanciare agenti) | No | Sì (1175 LOC `AcpBackend` god-object) | Sì (lean ACP in 4 file ≤200 LOC ciascuno) |
+| Approval handshake | No | Sì (con persistence cross-restart, driver control, pause) | Sì (in-memory only, no driver / pause / restart-backoff) |
+| Notifiche | No | Telegram + Slack + Email + Webhook (5 canali con registry) | Telegram + Slack + Discord + Webhook (funzioni concrete, no registry) |
+| Agenti supportati | Claude Code only | Claude Code via ACP | Claude Code via ACP in v1; multi-agent v2 |
+| Dato persistito | `~/.config/ccmeter/history.json` | Postgres pluggable (mai usato) + Redis half-wired | SQLite singolo file |
+| Deployment | Binary locale | Self-hosted con Phase 4 multi-tenant pianificato | Self-hosted single-user only (ADR-0001, 0004) |
+| LOC backend | ~10k Rust | 189 file TS + 366 file dashboard | 8000 LOC ceiling totale, attualmente ~1000 |
 
-Polaris **non sostituisce CCMeter**: CCMeter resta superiore se vuoi solo TUI locale. Polaris vince quando vuoi notifiche, accesso remoto, o multi-machine aggregation.
+**Posizionamento concreto**:
+- Polaris **converge sulla missione di Aegis** (ADR-0023 "control plane of Claude Code") ma con disciplina anti-over-engineering applicata da subito.
+- Polaris **non sostituisce CCMeter**: per analytics TUI locale CCMeter resta superiore. Polaris vince quando serve delegazione programmatica + accesso remoto.
+- Polaris **sostituirà Aegis** quando raggiungerà feature parity (v0.5) + stabilità (v1.0). Fino a quel momento Aegis vive in parallelo (il maintainer ha un team di agenti 24/7 su Aegis che migra gradualmente a Polaris).
 
 **Comparabili (per posizionarsi)**:
-- **CCMeter** — TUI Claude Code analytics. Inspirazione visiva diretta.
-- **Uptime Kuma** — self-hosted uptime, ma non AI-specific.
+- **CCMeter** — TUI Claude Code analytics. Inspirazione visiva diretta per la dashboard.
+- **Aegis** (predecessore) — stessa missione control plane, ma over-engineered. Polaris è la versione lean.
 - **Helicone / Langfuse** — LLM observability ma SaaS-first e B2B.
-- **claude-usage / ccusage CLI** — CLI tool, no UI live, no notifiche.
+- **claude-usage / ccusage CLI** — CLI tool view-only, no delegation, no notifiche.
 
 ---
 
-## 3. Scope locked al Day-1
+## 3. Scope (refined by ADR-0010 il 2026-05-18)
 
 ### IN scope per v1.0 (Beta)
+
+**Observatory layer** (v0.1 ✅, baseline rilasciata):
 - **Data ingest**:
   - JSONL parser per `~/.claude/projects/**/*.jsonl` (sessions Claude Code).
-  - Streaming + dedup per `requestId` come fa CCMeter (vedi §10 ADR-0007).
-  - Polling OAuth `/api/oauth/usage` per rate-limit tracking.
-- **Metriche calcolate** (parità con CCMeter):
+  - Streaming + dedup per `requestId` come fa CCMeter (ADR-0007).
+  - File watcher su `~/.claude/projects/` per ingest live (v0.2).
+  - Polling OAuth `/api/oauth/usage` per rate-limit tracking (futuro, dopo v0.5).
+- **Metriche calcolate** (parità con CCMeter ±1%):
   - Token (input, output, cache) per modello (Opus, Sonnet, Haiku).
-  - Costi USD via pricing table built-in.
-  - Lines suggested/accepted/added/deleted + acceptance rate.
-  - Active time estimation per progetto.
-  - Efficiency score (token/line).
-- **Web UI** (CCMeter-equivalent, vedi §5):
-  - KPI banner: cost totale, streak, active days, avg tokens/day, efficiency.
-  - Heatmaps GitHub-style (4 metriche).
-  - Project cards con sparklines.
-  - Per-project detail view.
-  - Time filters: 1h, 12h, Today, week, month, all.
-  - Rate-limit view (toggleable).
-- **Notifiche**:
-  - Trigger: cost-threshold superato, rate-limit approaching (>80%), session failed, daily summary.
-  - Canali: Telegram, Slack, Discord, Webhook (+ Email opzionale M2).
-- **Auth**: shared token via env `POLARIS_AUTH_TOKEN`.
-- **Storage**: SQLite (cache aggregati + historical metrics).
-- **Distribuzione**: Docker image multi-arch + single binary (Linux x64/arm64, macOS x64/arm64, Windows x64).
+  - Costi USD via pricing table built-in (`pricing/anthropic.json`).
+  - Lines suggested/accepted/added/deleted + acceptance rate (futuro, dopo v0.5).
+  - Active time estimation per progetto (futuro).
+  - Efficiency score (token/line) (futuro).
+- **Web UI** (ispirata a CCMeter):
+  - KPI banner: cost totale, events, input/output/cache tokens.
+  - Time-range tabs (today, 7d, 30d, all).
+  - Per-model breakdown.
+  - Heatmaps + project cards + per-project detail (futuro, dopo v0.5).
 
-### OUT scope (esplicito, scritti come ADR Day-1)
+**Control plane layer** (v0.3-v0.5, formalizzato da ADR-0010):
+- **ACP runtime** via `@agentclientprotocol/claude-agent-acp`:
+  - Spawn `claude-agent-acp` child process per session.
+  - JSON-RPC client wrapper per request/response correlation.
+  - 4 file flat in `src/acp/`, ognuno ≤200 LOC (anti-Aegis-god-object).
+- **Session lifecycle API**:
+  - `POST /v1/sessions` create.
+  - `POST /v1/sessions/:id/messages` send prompt → SSE stream eventi.
+  - `POST /v1/sessions/:id/approve` rispondi ad approval request.
+  - `DELETE /v1/sessions/:id` cancel.
+  - `GET /v1/sessions` list attive.
+- **Approval workflow**:
+  - In-memory only, no persistence cross-restart.
+  - Timeout configurabile, default deny.
+  - SSE emette `needs_approval` event al caller.
+- **Multi-turn conversation** + **session resume** (limitato a singolo processo Polaris; multi-instance fuori scope).
+
+**Trasversale**:
+- **Notifiche**:
+  - Trigger: cost-threshold superato, rate-limit approaching (>80%), session failed (futuro).
+  - Canali: Telegram, Slack, Discord, Webhook (funzioni concrete, no plugin registry — ADR-0005).
+- **Auth**: shared token via env `POLARIS_AUTH_TOKEN` (ADR-0004).
+- **Storage**: SQLite singolo file (ADR-0002).
+- **Distribuzione**: Docker image multi-arch (linux/amd64 + linux/arm64) su GHCR.
+
+### OUT scope (esplicito; aggiornato 2026-05-18)
+
+**Hard NO (forever)** — pathologies that destroyed Aegis:
+- Driver control (claim/release/transfer ownership cross-istanza).
+- Pause/resume intervention mid-session.
+- Restart backoff esponenziale (child crash = session dies, caller retries).
+- Multi-instance Redis coordination.
+- Pluggable session storage con N backend (ADR-0002).
+- `AgentAdapter` interface con 1 sola impl (ADR-0005 / ADR-0008).
+- Approval persistence cross-restart.
+- Orchestrazione / pipeline / DAG / workflow engine.
+- `AcpBackend` god-object (lezione Aegis: 4 file flat, no monolite).
+
+**NO in v1.0** (deferred, eventualmente in v2+):
 - SaaS / cloud hosting / billing / Stripe.
 - Multi-tenant / organizations / workspaces.
-- Multi-user / RBAC / OAuth / SSO (defer to v2).
-- Orchestrazione / pipeline / DAG (lezione Aegis `pipeline.ts`).
-- Cost tracking custom (oltre le pricing table dei modelli supportati).
-- Mobile native app (Telegram/Slack/Discord coprono mobile).
+- Multi-user / RBAC / OAuth / SSO.
+- Multi-agent (Cursor / Codex CLI / Gemini CLI) — il primo backend non ACP, se mai, richiede ADR.
+- Plugin system per channel custom o agent custom.
+
+**NO comunque**:
 - Postgres, Redis, Kubernetes, Helm chart.
 - OpenTelemetry export.
-- TUI (CCMeter esiste già — non duplichiamo).
-- Multi-agent in v1 (Claude Code only finché v1 non è stabile; Cursor/Codex/Gemini CLI in v2 via adapter).
-- Plugin system per channel custom o agent custom (in v3 forse, con due use-case esterni).
-- Integrazione con Anthropic Console / claude.ai (CCMeter già nota i limiti).
+- TUI Polaris (CCMeter occupa quella nicchia).
+- Mobile native app (Telegram/Slack/Discord coprono mobile).
+- Integrazione con Anthropic Console / claude.ai (limite tecnico, CCMeter già lo nota).
+- Cost tracking custom oltre i modelli supportati nel pricing table.
 
 ---
 
@@ -321,54 +364,77 @@ feature/<short-name> → develop → release/<v> → main → tag
 
 ---
 
-## 9. Roadmap (3 milestone, niente Phase 4 fantasiose)
+## 9. Roadmap (riscritta da ADR-0010 il 2026-05-18)
 
-### M0 — Foundation (target: 1 settimana)
-Goal: scheletro che compila, deploya, ingesta JSONL.
+Polaris ha completato la baseline observatory in v0.1.0 e ora costruisce il control plane via ACP. Sei tappe di rilascio chiare, ognuna con scope brutalmente limitato.
 
-- [ ] Setup TS + Fastify + Astro + SQLite + Biome + Vitest + CI matrix.
-- [ ] JSONL parser streaming con dedup `requestId` (5 fixture test).
-- [ ] Storage SQLite con schema sessions/events/daily_aggregates.
-- [ ] `GET /v1/metrics` ritorna JSON con totali aggregati.
-- [ ] Astro page `/` mostra HTML basic con totali (no heatmap ancora).
-- [ ] Docker image build.
-- [ ] 8 ADR Day-1 scritti.
+### v0.1.0 ✅ — Observatory baseline (M0, 2026-05-17→18)
 
-**Exit M0**: `polaris --jsonl-dir ~/.claude/projects` parsa i tuoi JSONL reali, salva su SQLite, `curl localhost:3000/v1/metrics` ritorna totali sensati confrontabili con CCMeter ±1%.
+JSONL ingest + dedup `requestId` + SQLite + `GET /v1/metrics` + Astro static UI + Docker multi-arch GHCR. 9 ADR Day-1, 6 PR mergiati, 6 trappole Aegis catturate da CI, zero rollback. 934 / 8000 LOC src/.
 
-### M1 — MVP CCMeter-parity + notifiche (target: 3-4 settimane dopo M0)
-Goal: web UI replica info-architecture CCMeter, + Telegram/Slack/Discord notifications.
+### v0.2.0 — File watcher (target: 1 settimana dopo v0.1.0)
 
-- [ ] **Metrics layer completo**: token aggregator, cost calculator, activity estimator, efficiency scorer.
-- [ ] **Rate-limit tracker**: OAuth poll, persistence, forecast estrapolazione.
-- [ ] **UI dashboard** (Astro):
-  - [ ] KPI banner (5 metriche).
-  - [ ] Heatmap GitHub-style (4 metriche, CSS Grid).
-  - [ ] Project cards grid con sparkline.
-  - [ ] Per-project detail view.
-  - [ ] Time filter (1h/12h/Today/week/month/all).
-  - [ ] Rate-limit view toggleabile.
-- [ ] **Rule engine** con 4 regole built-in: cost-threshold, rate-limit-near, session-failed, daily-summary.
-- [ ] **Notification adapter**: Telegram (bot), Slack (webhook), Discord (webhook).
-- [ ] **Auth**: `POLARIS_AUTH_TOKEN`.
-- [ ] **Settings panel** (Astro): rename project, merge, hide, star (parità CCMeter).
-- [ ] User guide + install guide + Docker compose example.
-- [ ] Release v0.1.0 con binary + Docker.
+Goal: ingestione passiva live, complementare ad ACP.
 
-**Exit M1**: maintainer runna Polaris come daemon, dashboard visibile da telefono via web UI, riceve notifica Telegram quando supera soglia di costo giornaliero. Totali metriche allineate con CCMeter ±1%. Total LOC ≤6500.
+- [ ] `src/ingest/jsonl-watcher.ts` con `fs.watch` su `~/.claude/projects/**/*.jsonl`.
+- [ ] Debounced re-parse per file appendati.
+- [ ] Integrazione con il parser+dedup già esistente.
+- [ ] Test: append a un file fixture mid-test, verify event in DB entro 2s.
 
-### M2 — Beta pubblico + Email + secondo agente (target: 1-2 mesi dopo MVP)
-Goal: prima validazione esterna, ≥5 utenti self-hosted.
+**Exit v0.2**: Polaris ingesta in <5s eventi JSONL appendati a sessioni live di Claude Code che girano fuori da Polaris.
 
-- [ ] Email notification adapter (`nodemailer`).
-- [ ] Webhook outbound generico (integrazioni custom).
-- [ ] Retention/pruning automatico (storico > N giorni → aggregati only).
-- [ ] **Secondo agente**: Cursor session parser (o l'agente che più utenti chiedono).
-- [ ] Performance budget: 10k sessioni parsate in <5s; UI p99 <100ms.
-- [ ] Documentation: troubleshooting, FAQ, "comparison with CCMeter / claude-usage".
-- [ ] CHANGELOG + community contributing guide.
+### v0.3.0 — ACP-A: client wrapper + spawner (target: 2 settimane dopo v0.2)
 
-**Exit M2**: ≥5 utenti esterni runnano Polaris ≥1 settimana, almeno 1 issue da utente esterno, no regressione.
+Goal: Polaris sa parlare ACP a `claude-agent-acp`.
+
+- [ ] Dipendenza `@agentclientprotocol/claude-agent-acp` aggiunta in runtime deps.
+- [ ] `src/acp/spawner.ts` — spawn child process, signal handling, exit code cleanup (~80 LOC).
+- [ ] `src/acp/json-rpc-client.ts` — JSON-RPC request/response correlation, AsyncIterator per event stream (~120 LOC).
+- [ ] Test con fixture replay (registra ACP traffic reale, replaya in test).
+
+**Exit v0.3**: `npm test` mostra Polaris che apre una sessione ACP fittizia, manda prompt, riceve eventi. No HTTP API ancora.
+
+### v0.4.0 — ACP-B: session manager + HTTP API (target: 2 settimane dopo v0.3)
+
+Goal: Polaris espone le sessioni ACP via REST.
+
+- [ ] `src/acp/session-manager.ts` — Map<sessionId, Handle> + persistence metadata su SQLite + cleanup on close (~200 LOC totali con tipi).
+- [ ] Routes: `POST /v1/sessions`, `DELETE /v1/sessions/:id`, `GET /v1/sessions`.
+- [ ] Auth via `POLARIS_AUTH_TOKEN` (ADR-0004).
+- [ ] Test integration: `app.inject` apre sessione, simula response ACP, verify state.
+
+**Exit v0.4**: `curl POST /v1/sessions` apre una vera sessione Claude Code via ACP; `curl GET /v1/sessions` la lista; `curl DELETE` la chiude.
+
+### v0.5.0 — ACP-C: approval workflow + SSE (target: 2 settimane dopo v0.4)
+
+Goal: **feature parity con Aegis ADR-0023**, in lean form.
+
+- [ ] `POST /v1/sessions/:id/messages` → ritorna SSE stream eventi.
+- [ ] Approval handshake: agent richiede tool use → server emette `needs_approval` su SSE → caller POST `/v1/sessions/:id/approve {accept: true|false}`.
+- [ ] Timeout approval configurabile (default: deny dopo N minuti).
+- [ ] UI Astro aggiornata: lista sessioni attive + tab per inviare prompt + auto-render approval prompt.
+- [ ] Documentation: "use Polaris as an ACP delegation runtime from your AI agent".
+
+**Exit v0.5**: un altro agente AI può fare via HTTP esattamente quello che farebbe aprendo `claude` in un terminale. Approval, multi-turn, resume. Aegis ADR-0023 raggiunto in ~1500 LOC totali src/ (vs Aegis stesso).
+
+### v1.0.0 — Stabilization + Aegis archive decision (target: 1-2 mesi dopo v0.5)
+
+Goal: prima validazione esterna seria, ≥5 utenti self-hosted, decisione su Aegis.
+
+- [ ] Performance budget: 100 sessioni concorrenti, 10k eventi/giorno, p99 query < 100ms.
+- [ ] Email notification adapter (`nodemailer`) — il 5° canale.
+- [ ] Retention/pruning automatico per `events` table.
+- [ ] User guide + install guide + comparison docs (vs CCMeter, vs Aegis).
+- [ ] **Aegis archive decision**: se Polaris stabile + il team agenti 24/7 del maintainer ha migrato, archivia Aegis ufficialmente.
+
+**Exit v1.0**: Polaris in produzione su ≥5 setup esterni, Aegis archivable (decisione esplicita), tag `v1.0.0` su main.
+
+### Post-v1.0 (deferred, ognuno richiede ADR + evidence)
+
+- Multi-agent (Cursor / Codex CLI / Gemini CLI) — primo backend non-ACP forse problematico.
+- Rate-limit OAuth polling (CCMeter-style live rate-limit view).
+- Heatmaps + project cards CCMeter-parity nella UI.
+- Plugin system per channel custom (se ≥2 use case esterni reali).
 
 ---
 
@@ -428,22 +494,24 @@ Vitest deve coprire (target ≥80% su `src/metrics/` e `src/ingest/`):
 
 ---
 
-## 12. Criteri di rilascio v0.1.0 ("MVP shippable")
+## 12. Criteri di rilascio (per ogni versione)
 
-v0.1.0 esce SOLO se TUTTI questi sono veri:
+**v0.1.0 ✅ (2026-05-18)** — observatory baseline. Criteri originali soddisfatti:
+- ✅ Docker image multi-arch su GHCR (`ghcr.io/onestepat4time/polaris:0.1.0`).
+- ✅ JSONL ingest via `POST /v1/ingest` con dedup `requestId`.
+- ✅ Web UI mostra: KPI banner, per-model table, time filter.
+- ✅ `npm run gate` passa su Linux + macOS + Windows.
+- ✅ Budgets: 934 / 8000 LOC, 5 / 20 deps, 4 / 12 env vars.
+- ✅ 61 test passati, no skipped, no mocked SQLite.
+- ⚠️ Differiti a release future (non bloccanti per v0.1.0): heatmap GitHub-style, project cards, rate-limit view (post-v0.5); parità ±1% su dataset reale (verifica utente); Telegram integration (verrà nei rilasci dopo v0.5).
 
-1. `curl -L .../polaris-linux-x64 -o polaris && chmod +x polaris && ./polaris` funziona (single binary).
-2. `docker run -p 3000:3000 -v ~/polaris:/data -v ~/.claude:/claude:ro ghcr.io/.../polaris:latest` funziona.
-3. JSONL ingest in tempo reale (file appender → evento in <5s).
-4. Web UI mostra: KPI banner, heatmap GitHub-style, project cards, time filter, rate-limit view.
-5. **Parità metriche con CCMeter ±1%** su stesso dataset.
-6. Almeno **Telegram** funziona end-to-end (canale minimo).
-7. Almeno **1 regola di alert** firea: cost-threshold giornaliero.
-8. `npm test` passa su Linux + macOS + Windows CI.
-9. README ha install + quickstart in <5 minuti.
-10. Total LOC ≤ 6500.
-11. Runtime dependencies ≤ 20.
-12. Env vars ≤ 12.
+**v0.2.0+** — ogni release deve passare:
+1. `npm run gate` verde su Linux + macOS + Windows.
+2. Docker multi-arch su GHCR.
+3. README quickstart copy-paste funzionante con il tag della versione.
+4. Tutti i ceiling rispettati (8000 LOC, 20 deps, 12 env vars).
+5. ADR scritto per ogni decisione architetturale nuova prima del codice.
+6. PR template compilato, anti-Aegis checklist al 4/4.
 
 Se uno solo manca: NON si rilascia, si itera.
 
@@ -453,19 +521,30 @@ Se uno solo manca: NON si rilascia, si itera.
 
 Se qualcuno (incluso il maintainer in un momento di debolezza) propone uno di questi senza nuova evidenza forte:
 
+**Hard NO forever (anti-Aegis hard line)**:
+- Driver control multi-istanza (claim/release/transfer di session ownership).
+- Pause/resume intervention mid-session.
+- Restart backoff esponenziale (crash = session dies, caller retries).
+- `AcpBackend` god-object o equivalente — ACP DEVE rimanere in 4 file flat ≤200 LOC ciascuno (ADR-0010).
+- Approval persistence cross-restart.
+- Pipeline / orchestration / workflow engine.
+
+**NO in v1.0** (deferred, eventualmente ADR + evidence):
 - Multi-tenant / organizations / workspaces.
 - SaaS hosted version.
 - OAuth / SSO / OIDC / SAML.
-- Postgres / Redis / Kafka / qualunque broker.
+- Postgres / Redis / Kafka / qualunque broker come storage primario.
 - Kubernetes / Helm chart / operator.
 - OpenTelemetry export.
-- TUI (CCMeter esiste già, fa benissimo il suo lavoro).
 - Mobile native app.
-- Pipeline / orchestration / workflow.
-- Custom pricing (oltre i modelli supportati).
-- Plugin system custom per channel o agent (in v3 forse, con due use-case esterni).
-- Generic process monitoring (non più scope di Polaris — pivotato verso AI-agent-specific con CCMeter parity).
-- Integrazione con claude.ai web/desktop (CCMeter ha già notato i limiti).
+- Multi-agent (Cursor / Codex CLI / Gemini CLI) — primo backend non-ACP è candidato ad ADR dedicato.
+- Plugin system per channel custom (in v3 forse, con due use-case esterni reali).
+
+**NO comunque**:
+- TUI Polaris (CCMeter occupa la nicchia).
+- Generic process monitoring (Polaris è specifico per AI agent observability + control plane).
+- Integrazione con claude.ai web/desktop (limite tecnico, CCMeter già nota).
+- Custom pricing (oltre i modelli supportati nel pricing table).
 
 Idea unavoidable → apri issue `needs-human`, NON iniziare PR.
 
@@ -498,9 +577,13 @@ Idea unavoidable → apri issue `needs-human`, NON iniziare PR.
 - `src/channels/slack-channel.ts` — Slack webhook.
 - `src/__tests__/*` — Vitest setup.
 
+**Da Aegis (STUDIO con cautela, post-ADR-0010)** — l'ACP wrapper di Aegis è scar tissue da studiare per capire i fail modes, NON da copiare:
+- `src/services/acp/json-rpc-client.ts` (696 LOC) — studiare correlazione request/response, timeouts, abortion handling; **NON copiare** la dimensione monolitica.
+- `src/services/acp/child-process.ts` — studiare signal handling e stdio piping; replicare in ~50 LOC, non i 318 originali.
+- `src/services/acp/backend.ts` (1175 LOC) — studiare COSA NON FARE: god-object, driver control, pause interventions, restart backoff. Polaris implementa solo session lifecycle + approval handshake, ognuno in file separato.
+
 **NON riusare da Aegis**:
-- `src/services/acp/` — Polaris non bridgea Claude Code, ne legge i JSONL.
-- `src/pipeline.ts` — out of scope.
+- `src/pipeline.ts` — out of scope (Aegis stesso ammette in ADR-0023 che contraddice "bridge not orchestrator").
 - `dashboard/` — UI Polaris è Astro server-rendered, non React SPA.
 - `src/services/state/` — pluggable store, out of scope.
 - `src/services/billing/` — fuori scope.

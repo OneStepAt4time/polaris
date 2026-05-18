@@ -49,8 +49,9 @@ How hard would it be to undo? Cheap / moderate / sticky.
 | [0005](./0005-no-premature-abstractions.md) | No abstractions before 2 implementations exist | Accepted |
 | [0006](./0006-loc-ceiling.md) | 8000 LOC ceiling for src/ at v1.0 | Accepted |
 | [0007](./0007-jsonl-dedup.md) | JSONL dedup strategy — by `requestId` | Accepted |
-| [0008](./0008-multi-agent-deferred.md) | Multi-agent adapter pattern DEFERRED to v2 | Accepted |
+| [0008](./0008-multi-agent-deferred.md) | Multi-agent adapter pattern DEFERRED to v2 | Accepted (refined by 0010) |
 | [0009](./0009-astro-static-build.md) | Astro static build, Fastify serves the artifact | Accepted (refines 0003) |
+| [0010](./0010-acp-control-plane.md) | ACP enters IN scope — Polaris becomes a lean control plane | Accepted (refines 0003, 0008; reaffirms 0005, 0006, 0007) |
 
 ## Superseding an ADR
 
