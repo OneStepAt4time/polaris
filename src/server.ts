@@ -5,6 +5,8 @@ import sensible from "@fastify/sensible";
 import staticPlugin from "@fastify/static";
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
+import { createAcpJsonRpcClient } from "./acp/json-rpc-client.js";
+import { type AcpProcessHandle, spawnAcpProcess } from "./acp/spawner.js";
 import { registerAuth } from "./auth.js";
 import { type Config, loadConfig } from "./config.js";
 import { type PolarisDb, openDb } from "./db.js";
@@ -92,6 +94,30 @@ export async function buildServer(): Promise<BuildResult> {
     const { fromMs, toMs } = resolveRange(range);
     const pricing = loadPricing();
     return reply.send(aggregate(db, range, fromMs, toMs, pricing));
+  });
+
+  // ACP reachability probe. Spawns claude-agent-acp, performs the JSON-RPC
+  // `initialize` handshake, and reports the agent's advertised capabilities.
+  // Each request is single-shot: spawn → init → kill. Session lifecycle proper
+  // lands in v0.4 (ADR-0010). 5s timeout on initialize handles the case where
+  // the bundled binary is present but the underlying `claude` install is not.
+  app.get("/v1/acp/health", { config: { requireAuth: true } }, async (_request, reply) => {
+    let handle: AcpProcessHandle | null = null;
+    try {
+      handle = spawnAcpProcess({ binCmd: config.acpBin });
+      const client = createAcpJsonRpcClient(handle.stdin, handle.stdout);
+      const capabilities = await client.request(
+        "initialize",
+        { protocolVersion: 1, clientCapabilities: {} },
+        { timeoutMs: 5000 },
+      );
+      client.close();
+      return reply.send({ available: true, capabilities });
+    } catch (err) {
+      return reply.code(503).send({ available: false, error: String(err) });
+    } finally {
+      if (handle) await handle.close();
+    }
   });
 
   // Static UI mounted at "/". Only registered when the build artifact exists;

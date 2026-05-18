@@ -14,6 +14,12 @@ const ConfigSchema = z.object({
   //       watcher (useful for headless ACP-only use of Polaris, v0.3+).
   //       Path is expanded with $HOME ("~/..." → /home/<user>/...).
   watchDir: z.string().default("~/.claude/projects"),
+  // why: command to spawn for the ACP child process (parsed as a shell-split
+  //       string; no quoting). Empty string ("") = auto-resolve the bundled
+  //       @agentclientprotocol/claude-agent-acp via Node module resolution.
+  //       Tests point this at a fixture script so the gate doesn't need a real
+  //       `claude` install. ADR-0010 v0.3 ACP-A.
+  acpBin: z.string().default(""),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -25,6 +31,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: env.POLARIS_PORT,
     dbPath: env.POLARIS_DB_PATH,
     watchDir: env.POLARIS_WATCH_DIR,
+    acpBin: env.POLARIS_ACP_BIN,
   });
   if (!parsed.success) {
     const issues = parsed.error.issues
