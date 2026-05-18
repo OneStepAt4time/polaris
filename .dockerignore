@@ -1,0 +1,45 @@
+# Build artifacts (re-built inside the container).
+node_modules
+dist
+
+# VCS and editor noise.
+.git
+.gitignore
+.gitattributes
+.github
+.vscode
+.idea
+.editorconfig
+
+# Polaris worktrees (per ADR-0006 workflow).
+.claude
+
+# Local environment and runtime artifacts.
+.env
+.env.*
+!.env.example
+*.log
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+coverage
+
+# Docs and policy files: not needed inside the image.
+docs
+CHARTER.md
+CONTRIBUTING.md
+AGENTS.md
+CLAUDE.md
+
+# Tests should not ship.
+src/__tests__
+**/*.test.ts
+vitest.config.ts
+
+# Lint/format configs not needed at runtime.
+biome.json
+
+# Docker artifacts.
+Dockerfile
+.dockerignore

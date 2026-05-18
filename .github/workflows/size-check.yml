@@ -1,0 +1,67 @@
+name: PR size check
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  pull-requests: read
+  contents: read
+
+jobs:
+  size:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute src/ diff size
+        id: diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          if [ ! -d "src" ]; then
+            echo "src/ does not yet exist — skipping size gate"
+            echo "delta=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Release PRs (develop → main) aggregate many feature PRs already
+          # passed through the ceiling individually — see .claude/rules/budgets.md
+          # §"How budgets are enforced". The 400-LOC ceiling applies to feature
+          # PRs into develop, not to the release merge that promotes them.
+          if [ "$BASE_REF" = "main" ]; then
+            echo "Release PR (base=main) — size ceiling does not apply"
+            echo "delta=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Exclude src/__tests__/** from the delta — test files are proof of
+          # correctness, not new behavior, and don't count toward the per-PR
+          # ceiling. See .claude/rules/budgets.md §"What does NOT count".
+          STATS=$(git diff --shortstat "$BASE_SHA"..."$HEAD_SHA" -- 'src/**' ':!src/__tests__/**' 2>/dev/null || echo "")
+          if [ -z "$STATS" ]; then
+            DELTA=0
+          else
+            ADDED=$(echo "$STATS" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo 0)
+            REMOVED=$(echo "$STATS" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' || echo 0)
+            DELTA=$((ADDED + REMOVED))
+          fi
+          echo "Source delta in src/ (excluding tests): $DELTA"
+          echo "delta=$DELTA" >> "$GITHUB_OUTPUT"
+
+      - name: Enforce 400 LOC ceiling
+        env:
+          DELTA: ${{ steps.diff.outputs.delta }}
+        run: |
+          MAX=400
+          if [ "$DELTA" -gt "$MAX" ]; then
+            echo "::error::PR exceeds $MAX-LOC source change limit (delta: $DELTA)."
+            echo "::error::Split into multiple PRs. One concern per PR."
+            echo "::error::See CLAUDE.md rule 5 and .claude/rules/prs.md."
+            exit 1
+          fi
+          echo "✓ PR size $DELTA / $MAX LOC."

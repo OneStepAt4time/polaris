@@ -141,3 +141,14 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Polaris-specific
+.claude/worktrees/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Astro local cache (auto-generated, not committed)
+.astro/
+
