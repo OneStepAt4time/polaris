@@ -16,6 +16,7 @@ describe("static UI mount", () => {
   beforeAll(async () => {
     process.env.POLARIS_AUTH_TOKEN = "ui-test-token-9876";
     process.env.POLARIS_DB_PATH = ":memory:";
+    process.env.POLARIS_WATCH_DIR = "";
     const built = await buildServer();
     app = built.app;
     await app.ready();

@@ -9,6 +9,11 @@ const ConfigSchema = z.object({
   port: z.coerce.number().int().positive().default(3000),
   // why: SQLite file path. Use ":memory:" for ephemeral testing (ADR-0002).
   dbPath: z.string().default("./polaris.db"),
+  // why: directory whose **/*.jsonl files are watched and ingested live.
+  //       Default ~/.claude/projects. Set to empty string to disable the
+  //       watcher (useful for headless ACP-only use of Polaris, v0.3+).
+  //       Path is expanded with $HOME ("~/..." → /home/<user>/...).
+  watchDir: z.string().default("~/.claude/projects"),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -19,6 +24,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     host: env.POLARIS_HOST,
     port: env.POLARIS_PORT,
     dbPath: env.POLARIS_DB_PATH,
+    watchDir: env.POLARIS_WATCH_DIR,
   });
   if (!parsed.success) {
     const issues = parsed.error.issues
