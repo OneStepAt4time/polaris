@@ -9,6 +9,7 @@ import { registerAuth } from "./auth.js";
 import { type Config, loadConfig } from "./config.js";
 import { type PolarisDb, openDb } from "./db.js";
 import { ingest } from "./ingest/ingest.js";
+import { type WatcherHandle, startWatcher } from "./ingest/jsonl-watcher.js";
 import { type TimeRange, aggregate, resolveRange } from "./metrics/aggregator.js";
 import { loadPricing } from "./metrics/pricing.js";
 
@@ -48,7 +49,16 @@ export async function buildServer(): Promise<BuildResult> {
   });
 
   const db = openDb(config.dbPath);
+
+  let watcher: WatcherHandle | null = null;
+  if (config.watchDir !== "") {
+    watcher = startWatcher(config.watchDir, db, {
+      log: (msg) => app.log.info(msg),
+    });
+  }
+
   app.addHook("onClose", async () => {
+    watcher?.close();
     db.close();
   });
 
