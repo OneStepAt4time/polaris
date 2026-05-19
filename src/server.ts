@@ -64,6 +64,11 @@ export async function buildServer(): Promise<BuildResult> {
     logger: {
       level: process.env.NODE_ENV === "test" ? "silent" : "info",
     },
+    // why: long-running Claude Code sessions produce JSONL files that grow
+    //       past Fastify's 1 MB default (a single 24/7 agent run can hit
+    //       70 MB+). Backfill + watcher re-parse need to ingest a whole
+    //       file in one POST. 128 MB ceiling caps pathological inputs.
+    bodyLimit: 128 * 1024 * 1024,
   });
 
   const db = openDb(config.dbPath);
