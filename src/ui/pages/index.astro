@@ -21,6 +21,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         --accent: #ffd54a;
         --border: #2a2a2a;
         --danger: #ff6666;
+        --success: #66cc66;
       }
       body {
         font-family: ui-monospace, "SF Mono", Consolas, "Liberation Mono", monospace;
@@ -37,6 +38,11 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         margin: 0;
         font-size: 1.5rem;
         letter-spacing: 0.04em;
+      }
+      h2 {
+        font-size: 1rem;
+        color: var(--fg);
+        margin: 1.5rem 0 0.5rem;
       }
       .tagline {
         color: var(--fg-dim);
@@ -89,16 +95,24 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         max-width: 480px;
       }
       input,
-      button {
+      button,
+      textarea {
         font-family: inherit;
         font-size: 0.875rem;
       }
-      input {
+      input,
+      textarea {
         background: var(--bg-card);
         border: 1px solid var(--border);
         color: var(--fg);
         padding: 0.5rem 0.75rem;
         flex: 1;
+      }
+      textarea {
+        resize: vertical;
+        min-height: 64px;
+        width: 100%;
+        display: block;
       }
       button {
         background: var(--accent);
@@ -108,17 +122,36 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         cursor: pointer;
         font-weight: 600;
       }
+      button.secondary {
+        background: var(--bg-card);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        font-weight: 400;
+      }
+      button.danger {
+        background: transparent;
+        color: var(--danger);
+        border: 1px solid var(--danger);
+        font-weight: 400;
+      }
+      button.success {
+        background: var(--success);
+        color: #000;
+      }
+      .tabs,
       .range-tabs {
         display: flex;
         gap: 0.5rem;
         margin: 1rem 0;
       }
+      .tabs button,
       .range-tabs button {
         background: var(--bg-card);
         color: var(--fg);
         border: 1px solid var(--border);
         font-weight: normal;
       }
+      .tabs button.active,
       .range-tabs button.active {
         background: var(--accent);
         color: #000;
@@ -140,7 +173,58 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         border: 1px solid var(--border);
         font-size: 0.75rem;
         padding: 0.25rem 0.5rem;
-        margin-left: 0.5rem;
+        margin-left: auto;
+      }
+      .session-card {
+        background: var(--bg-card);
+        padding: 1rem;
+        margin: 0.75rem 0;
+        border-left: 3px solid var(--accent);
+        cursor: pointer;
+      }
+      .session-card.selected {
+        border-left-color: var(--success);
+      }
+      .session-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        font-size: 0.8125rem;
+      }
+      .session-id {
+        font-family: inherit;
+        color: var(--fg-dim);
+      }
+      .session-cwd {
+        color: var(--fg);
+      }
+      .new-session {
+        display: flex;
+        gap: 0.5rem;
+        margin: 1rem 0;
+      }
+      .new-session input {
+        flex: 1;
+      }
+      .prompt-form {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        margin: 1rem 0;
+      }
+      .prompt-form .row {
+        display: flex;
+        gap: 0.5rem;
+      }
+      .response-pane {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        padding: 0.75rem 1rem;
+        margin-top: 1rem;
+        font-size: 0.8125rem;
+        white-space: pre-wrap;
+        max-height: 360px;
+        overflow-y: auto;
       }
     </style>
   </head>
@@ -167,16 +251,49 @@ const tagline = "Self-hosted observatory for your AI coding agents";
     </section>
 
     <section id="dashboard" hidden>
-      <div class="range-tabs" role="tablist">
-        <button data-range="today" class="active">Today</button>
-        <button data-range="7d">7 days</button>
-        <button data-range="30d">30 days</button>
-        <button data-range="all">All</button>
+      <div class="tabs" role="tablist">
+        <button data-tab="metrics" class="active">Metrics</button>
+        <button data-tab="sessions">Sessions</button>
         <button id="logout" class="logout">Logout</button>
       </div>
-      <div id="kpis" class="kpis"></div>
-      <div id="per-model" class="per-model"></div>
-      <p class="muted" id="range-meta"></p>
+
+      <div id="tab-metrics">
+        <div class="range-tabs" role="tablist">
+          <button data-range="today" class="active">Today</button>
+          <button data-range="7d">7 days</button>
+          <button data-range="30d">30 days</button>
+          <button data-range="all">All</button>
+        </div>
+        <div id="kpis" class="kpis"></div>
+        <div id="per-model" class="per-model"></div>
+        <p class="muted" id="range-meta"></p>
+      </div>
+
+      <div id="tab-sessions" hidden>
+        <h2>New session</h2>
+        <form id="new-session-form" class="new-session">
+          <input
+            type="text"
+            id="new-session-cwd"
+            placeholder="Working directory (absolute path)"
+            required
+          />
+          <button type="submit">Create</button>
+        </form>
+        <h2>Active sessions</h2>
+        <div id="sessions-list"></div>
+        <div id="session-detail" hidden>
+          <h2>Selected session</h2>
+          <form id="prompt-form" class="prompt-form">
+            <textarea id="prompt-text" placeholder="Type a prompt..." required></textarea>
+            <div class="row">
+              <button type="submit">Send prompt</button>
+              <button type="button" id="delete-session" class="danger">Delete session</button>
+            </div>
+          </form>
+          <div id="response-pane" class="response-pane muted">No prompt sent yet.</div>
+        </div>
+      </div>
     </section>
 
     <script is:inline>
@@ -197,8 +314,18 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
         return String(n);
       };
+      const escape = (s) =>
+        String(s).replace(/[&<>"']/g, (c) => ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[c]);
 
       const $ = (id) => document.getElementById(id);
+      const authHeader = () => ({ Authorization: "Bearer " + getToken() });
+
       const showAuth = () => {
         $("auth-pane").hidden = false;
         $("dashboard").hidden = true;
@@ -208,22 +335,30 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         $("dashboard").hidden = false;
       };
 
-      async function fetchMetrics(range) {
-        const token = getToken();
-        if (!token) throw new Error("No token");
-        const res = await fetch("/v1/metrics?range=" + encodeURIComponent(range), {
-          headers: { Authorization: "Bearer " + token },
+      async function apiFetch(path, init = {}) {
+        const res = await fetch(path, {
+          ...init,
+          headers: {
+            "content-type": "application/json",
+            ...authHeader(),
+            ...(init.headers || {}),
+          },
         });
         if (res.status === 401) {
           clearToken();
           showAuth();
           throw new Error("Token rejected");
         }
+        return res;
+      }
+
+      // ── Metrics tab ──────────────────────────────────────────────────────
+      async function fetchMetrics(range) {
+        const res = await apiFetch("/v1/metrics?range=" + encodeURIComponent(range));
         if (!res.ok) throw new Error("HTTP " + res.status);
         return res.json();
       }
-
-      function render(data) {
+      function renderMetrics(data) {
         const kpis = [
           { label: "Total cost", value: formatUsd(data.totals.costUsd) },
           { label: "Events", value: String(data.totals.events) },
@@ -241,17 +376,16 @@ const tagline = "Self-hosted observatory for your AI coding agents";
               "</div></div>",
           )
           .join("");
-
         const header =
           '<div class="model-row header"><div>Model</div><div>Events</div><div>Tokens</div><div>Cost</div></div>';
         const rows = data.perModel
           .map(
             (m) =>
               '<div class="model-row"><div>' +
-              m.model +
+              escape(m.model) +
               "</div><div>" +
               m.events +
-              ' events</div><div>' +
+              " events</div><div>" +
               formatTokens(m.inputTokens + m.outputTokens) +
               " tok</div><div>" +
               formatUsd(m.costUsd) +
@@ -260,7 +394,6 @@ const tagline = "Self-hosted observatory for your AI coding agents";
           .join("");
         $("per-model").innerHTML =
           rows.length > 0 ? header + rows : '<p class="muted">No events in this range yet.</p>';
-
         $("range-meta").textContent =
           "Range: " +
           data.range +
@@ -269,44 +402,169 @@ const tagline = "Self-hosted observatory for your AI coding agents";
           " → " +
           new Date(data.toMs).toISOString();
       }
-
-      async function load(range) {
+      async function loadMetrics(range) {
         try {
-          const data = await fetchMetrics(range);
-          render(data);
+          renderMetrics(await fetchMetrics(range));
         } catch (e) {
-          $("kpis").innerHTML = '<div class="error">Failed to load: ' + e.message + "</div>";
+          $("kpis").innerHTML = '<div class="error">Failed to load: ' + escape(e.message) + "</div>";
           $("per-model").innerHTML = "";
         }
       }
 
+      // ── Sessions tab ─────────────────────────────────────────────────────
+      // v0.6.0 ships the basic registry: list / create / prompt (sync) / delete.
+      // Live SSE event stream + inline approval buttons land in v0.6.1; until
+      // then the SessionManager auto-resolves nothing — a prompt that needs a
+      // permission hangs until the per-approval 5-min timeout cancels it.
+      let selectedSession = null;
+
+      async function refreshSessions() {
+        try {
+          const res = await apiFetch("/v1/sessions");
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          const { sessions } = await res.json();
+          renderSessions(sessions);
+        } catch (e) {
+          $("sessions-list").innerHTML =
+            '<div class="error">Failed to load: ' + escape(e.message) + "</div>";
+        }
+      }
+      function renderSessions(sessions) {
+        if (!sessions.length) {
+          $("sessions-list").innerHTML = '<p class="muted">No active sessions.</p>';
+          return;
+        }
+        $("sessions-list").innerHTML = sessions
+          .map(
+            (s) =>
+              '<div class="session-card' +
+              (s.id === selectedSession ? " selected" : "") +
+              '" data-session-id="' +
+              escape(s.id) +
+              '"><div class="session-header"><span class="session-cwd">' +
+              escape(s.cwd) +
+              '</span><span class="session-id">' +
+              escape(s.id.slice(0, 12)) +
+              " · " +
+              escape(s.status) +
+              "</span></div></div>",
+          )
+          .join("");
+        document.querySelectorAll(".session-card").forEach((el) => {
+          el.addEventListener("click", () => selectSession(el.dataset.sessionId));
+        });
+      }
+      function selectSession(id) {
+        selectedSession = id;
+        $("session-detail").hidden = false;
+        $("response-pane").className = "response-pane muted";
+        $("response-pane").textContent = "No prompt sent yet.";
+        refreshSessions();
+      }
+      async function sendPrompt(text) {
+        if (!selectedSession) return;
+        $("response-pane").className = "response-pane muted";
+        $("response-pane").textContent = "→ " + text + "\n\nWaiting for response…";
+        try {
+          const res = await apiFetch(
+            "/v1/sessions/" + encodeURIComponent(selectedSession) + "/messages",
+            { method: "POST", body: JSON.stringify({ text }) },
+          );
+          if (!res.ok) {
+            $("response-pane").className = "response-pane error";
+            $("response-pane").textContent = "HTTP " + res.status + ": " + (await res.text());
+            return;
+          }
+          const result = await res.json();
+          $("response-pane").className = "response-pane";
+          $("response-pane").textContent =
+            "→ " + text + "\n\nstopReason=" + result.stopReason +
+            "\nupdates=" + (result.updates?.length ?? 0);
+        } catch (e) {
+          $("response-pane").className = "response-pane error";
+          $("response-pane").textContent = "Error: " + e.message;
+        }
+      }
+      async function deleteSession() {
+        if (!selectedSession) return;
+        await apiFetch("/v1/sessions/" + encodeURIComponent(selectedSession), {
+          method: "DELETE",
+        });
+        selectedSession = null;
+        $("session-detail").hidden = true;
+        refreshSessions();
+      }
+
+      // ── Wiring ───────────────────────────────────────────────────────────
       document.getElementById("token-form").addEventListener("submit", (ev) => {
         ev.preventDefault();
         const t = $("token-input").value.trim();
         if (!t) return;
         setToken(t);
         showDashboard();
-        load("today");
+        loadMetrics("today");
       });
-
+      document.querySelectorAll(".tabs button[data-tab]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          document
+            .querySelectorAll(".tabs button[data-tab]")
+            .forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+          const tab = btn.dataset.tab;
+          $("tab-metrics").hidden = tab !== "metrics";
+          $("tab-sessions").hidden = tab !== "sessions";
+          if (tab === "sessions") refreshSessions();
+        });
+      });
       document.querySelectorAll(".range-tabs button[data-range]").forEach((btn) => {
         btn.addEventListener("click", () => {
           document
             .querySelectorAll(".range-tabs button[data-range]")
             .forEach((b) => b.classList.remove("active"));
           btn.classList.add("active");
-          load(btn.dataset.range);
+          loadMetrics(btn.dataset.range);
         });
       });
-
       $("logout").addEventListener("click", () => {
         clearToken();
         showAuth();
       });
+      $("new-session-form").addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const cwd = $("new-session-cwd").value.trim();
+        if (!cwd) return;
+        try {
+          const res = await apiFetch("/v1/sessions", {
+            method: "POST",
+            body: JSON.stringify({ cwd }),
+          });
+          if (!res.ok) {
+            const body = await res.text();
+            $("sessions-list").innerHTML =
+              '<div class="error">Create failed: ' + escape(body) + "</div>";
+            return;
+          }
+          const session = await res.json();
+          $("new-session-cwd").value = "";
+          refreshSessions();
+          selectSession(session.id);
+        } catch (e) {
+          $("sessions-list").innerHTML =
+            '<div class="error">Create failed: ' + escape(e.message) + "</div>";
+        }
+      });
+      $("prompt-form").addEventListener("submit", (ev) => {
+        ev.preventDefault();
+        const text = $("prompt-text").value.trim();
+        if (!text) return;
+        $("prompt-text").value = "";
+        sendPrompt(text);
+      });
+      $("delete-session").addEventListener("click", () => deleteSession());
 
       if (getToken()) {
         showDashboard();
-        load("today");
+        loadMetrics("today");
       } else {
         showAuth();
       }
