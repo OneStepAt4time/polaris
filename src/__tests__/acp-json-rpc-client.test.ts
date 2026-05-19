@@ -157,4 +157,23 @@ describe("createAcpJsonRpcClient", () => {
     await expect(pPing).resolves.toBe("pong");
     await expect(pEcho).resolves.toEqual({ hello: "world" });
   });
+
+  it("respondResult writes a success response to stdin", async () => {
+    pair.client.respondResult(42, { ok: true });
+    const lines = await pair.clientReadLines();
+    const parsed = JSON.parse(lines[0] as string) as { id: number; result: { ok: boolean } };
+    expect(parsed.id).toBe(42);
+    expect(parsed.result).toEqual({ ok: true });
+  });
+
+  it("respondError writes an error response to stdin", async () => {
+    pair.client.respondError(7, -32601, "Method not found");
+    const lines = await pair.clientReadLines();
+    const parsed = JSON.parse(lines[0] as string) as {
+      id: number;
+      error: { code: number; message: string };
+    };
+    expect(parsed.id).toBe(7);
+    expect(parsed.error).toEqual({ code: -32601, message: "Method not found" });
+  });
 });
