@@ -52,6 +52,7 @@ How hard would it be to undo? Cheap / moderate / sticky.
 | [0008](./0008-multi-agent-deferred.md) | Multi-agent adapter pattern DEFERRED to v2 | Accepted (refined by 0010) |
 | [0009](./0009-astro-static-build.md) | Astro static build, Fastify serves the artifact | Accepted (refines 0003) |
 | [0010](./0010-acp-control-plane.md) | ACP enters IN scope — Polaris becomes a lean control plane | Accepted (refines 0003, 0008; reaffirms 0005, 0006, 0007) |
+| [0011](./0011-native-arm-runner-multi-arch.md) | Multi-arch Docker builds on native runners | Accepted |
 
 ## Superseding an ADR
 
