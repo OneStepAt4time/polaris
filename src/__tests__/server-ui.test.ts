@@ -34,6 +34,14 @@ describe("static UI mount", () => {
     expect(res.body.toLowerCase()).toContain("polaris");
   });
 
+  it.runIf(uiBuilt)("GET / serves both Metrics and Sessions tabs", async () => {
+    const res = await app.inject({ method: "GET", url: "/" });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('data-tab="metrics"');
+    expect(res.body).toContain('data-tab="sessions"');
+    expect(res.body).toContain("New session");
+  });
+
   it.runIf(uiBuilt)("GET / does NOT require auth (static shell is public)", async () => {
     // Note: the dynamic /v1/* endpoints stay auth-gated. The HTML shell is
     // public so users can hit the page to enter their token.
