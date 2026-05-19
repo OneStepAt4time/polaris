@@ -98,7 +98,7 @@ export async function buildServer(): Promise<BuildResult> {
   app.get("/health", () => ({
     status: "ok",
     service: "polaris",
-    version: "0.4.0",
+    version: "0.5.0",
   }));
 
   app.post("/v1/ingest", { config: { requireAuth: true } }, async (request, reply) => {
