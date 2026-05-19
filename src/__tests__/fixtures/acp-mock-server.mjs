@@ -2,12 +2,17 @@
 // Test fixture: a minimal in-process ACP "server" that reads JSON-RPC
 // requests on stdin and emits canned responses on stdout. Used by
 // acp-spawner.test.ts, server-acp.test.ts, session-manager.test.ts,
-// and server-sessions.test.ts so the gate doesn't need a real `claude`
-// install or the actual @agentclientprotocol bin.
+// server-sessions.test.ts, and server-sse.test.ts so the gate doesn't
+// need a real `claude` install or the actual @agentclientprotocol bin.
 
 let buffer = "";
 let sessionCounter = 0;
+let requestCounter = 1000;
 const sessions = new Map();
+// Pending server-initiated permission requests: map request-id → callback
+// invoked when the client responds. The callback gets the response object
+// so the fixture can finalize the prompt only after the client decides.
+const pendingPermissionResponses = new Map();
 
 process.stdin.on("data", (chunk) => {
   buffer += chunk.toString("utf8");
@@ -48,6 +53,20 @@ function serverRequest(id, method, params) {
 }
 
 function handle(msg) {
+  // Client → Agent response to a previously-issued server-initiated request.
+  if (
+    typeof msg.id !== "undefined" &&
+    !msg.method &&
+    (msg.result !== undefined || msg.error !== undefined)
+  ) {
+    const cb = pendingPermissionResponses.get(msg.id);
+    if (cb) {
+      pendingPermissionResponses.delete(msg.id);
+      cb(msg);
+    }
+    return;
+  }
+
   if (typeof msg.id !== "undefined" && msg.method) {
     switch (msg.method) {
       case "initialize":
@@ -71,20 +90,33 @@ function handle(msg) {
           return;
         }
         const userText = msg.params?.prompt?.[0]?.text ?? "";
-        // Stream two updates then the final response, so the manager has
-        // something to collect into the per-prompt updates window.
         notify("session/update", { sessionId: sid, kind: "thinking", text: "..." });
         notify("session/update", {
           sessionId: sid,
           kind: "agent_message",
           text: `echo:${userText}`,
         });
-        // Special trigger: text "ask-permission" exercises the auto-deny path.
         if (userText === "ask-permission") {
-          serverRequest(100 + msg.id, "session/request_permission", {
+          requestCounter += 1;
+          const permId = requestCounter;
+          pendingPermissionResponses.set(permId, (response) => {
+            // Echo the resolved outcome back into the prompt response so tests
+            // can assert the full round-trip.
+            reply(msg.id, {
+              stopReason: "end_turn",
+              userMessageId: msg.params?.messageId ?? null,
+              approvalOutcome: response.result?.outcome ?? null,
+            });
+          });
+          serverRequest(permId, "session/request_permission", {
             sessionId: sid,
             toolUse: { name: "Bash", input: { command: "ls" } },
+            options: [
+              { id: "allow", name: "Allow", kind: "allow_once" },
+              { id: "deny", name: "Deny", kind: "reject_once" },
+            ],
           });
+          return;
         }
         reply(msg.id, { stopReason: "end_turn", userMessageId: msg.params?.messageId ?? null });
         return;
@@ -107,7 +139,6 @@ function handle(msg) {
     notify("update", { from: "fixture", echo: msg.params });
   }
   if (msg.method === "session/cancel") {
-    // Notification — no reply. Fixture forgets the session.
     if (typeof msg.params?.sessionId === "string") {
       sessions.delete(msg.params.sessionId);
     }

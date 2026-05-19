@@ -33,6 +33,11 @@ const PromptBodySchema = z.object({
   timeoutMs: z.number().int().positive().optional(),
 });
 
+const ApprovalBodySchema = z.discriminatedUnion("outcome", [
+  z.object({ outcome: z.literal("selected"), optionId: z.string().min(1) }),
+  z.object({ outcome: z.literal("cancelled") }),
+]);
+
 export interface BuildResult {
   app: FastifyInstance;
   config: Config;
@@ -93,7 +98,7 @@ export async function buildServer(): Promise<BuildResult> {
   app.get("/health", () => ({
     status: "ok",
     service: "polaris",
-    version: "0.4.0",
+    version: "0.5.0",
   }));
 
   app.post("/v1/ingest", { config: { requireAuth: true } }, async (request, reply) => {
@@ -143,10 +148,11 @@ export async function buildServer(): Promise<BuildResult> {
     }
   });
 
-  // Session lifecycle (ADR-0010 control plane). The four routes mirror the
-  // ACP session methods (session/new, session/prompt, session/cancel) and
-  // expose a registry of in-flight sessions. Server-initiated requests like
-  // session/request_permission are auto-denied until ACP-C (v0.5).
+  // Session lifecycle (ADR-0010 control plane). The routes mirror the ACP
+  // session methods (session/new, session/prompt, session/cancel) and expose a
+  // registry of in-flight sessions. ACP-C adds the SSE event stream + approval
+  // response surface so server-initiated session/request_permission requests
+  // round-trip back to the caller.
   app.post("/v1/sessions", { config: { requireAuth: true } }, async (request, reply) => {
     const parsed = CreateSessionBodySchema.safeParse(request.body);
     if (!parsed.success) {
@@ -210,6 +216,63 @@ export async function buildServer(): Promise<BuildResult> {
         return reply.code(404).send({ error: "Session not found" });
       }
       await sessionManager.deleteSession(request.params.id);
+      return reply.code(204).send();
+    },
+  );
+
+  // SSE event stream. The handler hijacks the response and pumps each
+  // SessionEvent as a single `data: <json>\n\n` frame. Closing the request
+  // (client disconnect, or DELETE on the session) unsubscribes the listener.
+  app.get<{ Params: { id: string } }>(
+    "/v1/sessions/:id/events",
+    { config: { requireAuth: true } },
+    async (request, reply) => {
+      const mgr = sessionManager;
+      if (!mgr?.getSession(request.params.id)) {
+        return reply.code(404).send({ error: "Session not found" });
+      }
+      reply.hijack();
+      const raw = reply.raw;
+      raw.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      });
+      raw.write(": subscribed\n\n");
+      const unsubscribe = mgr.subscribe(request.params.id, (event) => {
+        raw.write(`data: ${JSON.stringify(event)}\n\n`);
+        if (event.type === "session-closed") raw.end();
+      });
+      request.raw.once("close", () => unsubscribe());
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    "/v1/sessions/:id/approvals",
+    { config: { requireAuth: true } },
+    async (request, reply) => {
+      const mgr = sessionManager;
+      if (!mgr?.getSession(request.params.id)) {
+        return reply.code(404).send({ error: "Session not found" });
+      }
+      return reply.send({ approvals: mgr.listApprovals(request.params.id) });
+    },
+  );
+
+  app.post<{ Params: { id: string; approvalId: string } }>(
+    "/v1/sessions/:id/approvals/:approvalId",
+    { config: { requireAuth: true } },
+    async (request, reply) => {
+      const mgr = sessionManager;
+      if (!mgr?.getSession(request.params.id)) {
+        return reply.code(404).send({ error: "Session not found" });
+      }
+      const parsed = ApprovalBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: parsed.error.issues });
+      }
+      const ok = mgr.respondToApproval(request.params.id, request.params.approvalId, parsed.data);
+      if (!ok) return reply.code(404).send({ error: "Approval not found" });
       return reply.code(204).send();
     },
   );
