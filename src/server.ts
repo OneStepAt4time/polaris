@@ -6,6 +6,7 @@ import staticPlugin from "@fastify/static";
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createAcpJsonRpcClient } from "./acp/json-rpc-client.js";
+import { type SessionManager, createSessionManager } from "./acp/session-manager.js";
 import { type AcpProcessHandle, spawnAcpProcess } from "./acp/spawner.js";
 import { registerAuth } from "./auth.js";
 import { type Config, loadConfig } from "./config.js";
@@ -21,6 +22,16 @@ const IngestBodySchema = z.object({
 });
 
 const RangeSchema = z.enum(["today", "7d", "30d", "all"]).default("today");
+
+const CreateSessionBodySchema = z.object({
+  cwd: z.string().min(1),
+  mcpServers: z.array(z.unknown()).optional(),
+});
+
+const PromptBodySchema = z.object({
+  text: z.string().min(1),
+  timeoutMs: z.number().int().positive().optional(),
+});
 
 export interface BuildResult {
   app: FastifyInstance;
@@ -59,8 +70,20 @@ export async function buildServer(): Promise<BuildResult> {
     });
   }
 
+  // Session manager singleton. Spawned on first /v1/sessions* request so the
+  // ACP child process is not paid for by callers who only use /v1/metrics or
+  // /v1/ingest. Closed alongside the server.
+  let sessionManager: SessionManager | null = null;
+  const getSessionManager = (): SessionManager => {
+    if (sessionManager === null) {
+      sessionManager = createSessionManager({ binCmd: config.acpBin });
+    }
+    return sessionManager;
+  };
+
   app.addHook("onClose", async () => {
     watcher?.close();
+    if (sessionManager) await sessionManager.close();
     db.close();
   });
 
@@ -70,7 +93,7 @@ export async function buildServer(): Promise<BuildResult> {
   app.get("/health", () => ({
     status: "ok",
     service: "polaris",
-    version: "0.2.0",
+    version: "0.4.0",
   }));
 
   app.post("/v1/ingest", { config: { requireAuth: true } }, async (request, reply) => {
@@ -119,6 +142,77 @@ export async function buildServer(): Promise<BuildResult> {
       if (handle) await handle.close();
     }
   });
+
+  // Session lifecycle (ADR-0010 control plane). The four routes mirror the
+  // ACP session methods (session/new, session/prompt, session/cancel) and
+  // expose a registry of in-flight sessions. Server-initiated requests like
+  // session/request_permission are auto-denied until ACP-C (v0.5).
+  app.post("/v1/sessions", { config: { requireAuth: true } }, async (request, reply) => {
+    const parsed = CreateSessionBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error.issues });
+    }
+    try {
+      const created = await getSessionManager().createSession({
+        cwd: parsed.data.cwd,
+        ...(parsed.data.mcpServers !== undefined && { mcpServers: parsed.data.mcpServers }),
+      });
+      return reply.code(201).send(created);
+    } catch (err) {
+      return reply.code(503).send({ error: String(err) });
+    }
+  });
+
+  app.get("/v1/sessions", { config: { requireAuth: true } }, async (_request, reply) => {
+    const sessions = sessionManager ? sessionManager.listSessions() : [];
+    return reply.send({ sessions });
+  });
+
+  app.get<{ Params: { id: string } }>(
+    "/v1/sessions/:id",
+    { config: { requireAuth: true } },
+    async (request, reply) => {
+      const rec = sessionManager?.getSession(request.params.id);
+      if (!rec) return reply.code(404).send({ error: "Session not found" });
+      return reply.send(rec);
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/v1/sessions/:id/messages",
+    { config: { requireAuth: true } },
+    async (request, reply) => {
+      const parsed = PromptBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: parsed.error.issues });
+      }
+      if (!sessionManager?.getSession(request.params.id)) {
+        return reply.code(404).send({ error: "Session not found" });
+      }
+      try {
+        const result = await sessionManager.sendPrompt(
+          request.params.id,
+          parsed.data.text,
+          parsed.data.timeoutMs,
+        );
+        return reply.send(result);
+      } catch (err) {
+        return reply.code(503).send({ error: String(err) });
+      }
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>(
+    "/v1/sessions/:id",
+    { config: { requireAuth: true } },
+    async (request, reply) => {
+      if (!sessionManager?.getSession(request.params.id)) {
+        return reply.code(404).send({ error: "Session not found" });
+      }
+      await sessionManager.deleteSession(request.params.id);
+      return reply.code(204).send();
+    },
+  );
 
   // Static UI mounted at "/". Only registered when the build artifact exists;
   // tests that hit `/` directly (without running `npm run build:ui` first) get

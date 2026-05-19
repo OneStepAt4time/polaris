@@ -45,6 +45,10 @@ export interface RequestOptions {
 export interface AcpJsonRpcClient extends EventEmitter {
   request<T = unknown>(method: string, params?: unknown, options?: RequestOptions): Promise<T>;
   notify(method: string, params?: unknown): void;
+  /** Reply to a server-initiated request with a success result. */
+  respondResult(id: JsonRpcId, result: unknown): void;
+  /** Reply to a server-initiated request with an error. */
+  respondError(id: JsonRpcId, code: number, message: string, data?: unknown): void;
   /** Mark closed; reject all pending; doesn't close the underlying streams (caller owns them). */
   close(): void;
   /** Resolves once `close()` is called or the stream closes itself. */
@@ -113,6 +117,19 @@ class AcpJsonRpcClientImpl extends EventEmitter implements AcpJsonRpcClient {
   notify(method: string, params?: unknown): void {
     if (this.closedFlag) return;
     const msg: JsonRpcNotification = { jsonrpc: "2.0", method, params };
+    this.stdin.write(`${JSON.stringify(msg)}\n`);
+  }
+
+  respondResult(id: JsonRpcId, result: unknown): void {
+    if (this.closedFlag) return;
+    const msg: JsonRpcResponse = { jsonrpc: "2.0", id, result };
+    this.stdin.write(`${JSON.stringify(msg)}\n`);
+  }
+
+  respondError(id: JsonRpcId, code: number, message: string, data?: unknown): void {
+    if (this.closedFlag) return;
+    const error = data === undefined ? { code, message } : { code, message, data };
+    const msg: JsonRpcResponse = { jsonrpc: "2.0", id, error };
     this.stdin.write(`${JSON.stringify(msg)}\n`);
   }
 
