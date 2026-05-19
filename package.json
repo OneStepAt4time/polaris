@@ -1,6 +1,6 @@
 {
   "name": "@onestepat4time/polaris",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Self-hosted lean control plane for AI coding agents. Delegate via API, monitor live.",
   "license": "MIT",
@@ -35,6 +35,7 @@
     "gate": "npm run typecheck && npm run lint && npm run build:ui && npm run test && npm run budget-check"
   },
   "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "^0.36.1",
     "@fastify/sensible": "^6.0.0",
     "@fastify/static": "^8.0.0",
     "better-sqlite3": "^12.0.0",
