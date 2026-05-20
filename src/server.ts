@@ -136,6 +136,12 @@ export async function buildServer(): Promise<BuildResult> {
         //       once per UTC day at hour 23. No new env var — opt-in via
         //       the same conditions that start the rules engine. v0.14.0.
         dailySummary: { hourUtc: 23 },
+        // why: session-failed reads the SessionManager's in-memory failure
+        //       buffer. The SessionManager is lazy-init, so the getter
+        //       returns [] until the manager has been spawned. v0.15.0.
+        sessionFailed: {
+          failuresSource: () => sessionManager?.recentFailures() ?? [],
+        },
         channels,
         intervalMs: 5 * 60 * 1000,
       },
@@ -166,7 +172,7 @@ export async function buildServer(): Promise<BuildResult> {
   app.get("/health", () => ({
     status: "ok",
     service: "polaris",
-    version: "0.14.1",
+    version: "0.15.0",
   }));
 
   app.post("/v1/ingest", { config: { requireAuth: true } }, async (request, reply) => {
