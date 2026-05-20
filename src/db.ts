@@ -14,12 +14,21 @@ export interface EventRow {
   rawCostUsd: number | null;
 }
 
+export interface RateLimitSample {
+  tsMs: number;
+  httpStatus: number;
+  rawJson: string | null;
+  error: string | null;
+}
+
 export interface PolarisDb {
   insertEvent(e: EventRow): boolean;
   countEvents(): number;
   getEventsInRange(fromMs: number, toMs: number): EventRow[];
   wasNotified(ruleName: string, dedupKey: string): boolean;
   markNotified(ruleName: string, dedupKey: string, sentAtMs: number): void;
+  insertRateLimitSample(s: RateLimitSample): void;
+  getLatestRateLimitSample(): RateLimitSample | null;
   close(): void;
 }
 
@@ -42,6 +51,12 @@ const MIGRATIONS: readonly string[] = [
      dedup_key TEXT NOT NULL,
      sent_at INTEGER NOT NULL,
      PRIMARY KEY (rule_name, dedup_key)
+   )`,
+  `CREATE TABLE IF NOT EXISTS rate_history (
+     ts_ms INTEGER PRIMARY KEY,
+     http_status INTEGER NOT NULL,
+     raw_json TEXT,
+     error TEXT
    )`,
 ];
 
@@ -89,6 +104,14 @@ export function openDb(path: string): PolarisDb {
   const notifyInsertStmt = db.prepare(
     "INSERT OR REPLACE INTO notifications_sent (rule_name, dedup_key, sent_at) VALUES (?, ?, ?)",
   );
+  const rateInsertStmt = db.prepare(
+    `INSERT OR REPLACE INTO rate_history (ts_ms, http_status, raw_json, error)
+     VALUES (@tsMs, @httpStatus, @rawJson, @error)`,
+  );
+  const rateLatestStmt = db.prepare(
+    `SELECT ts_ms AS tsMs, http_status AS httpStatus, raw_json AS rawJson, error
+     FROM rate_history ORDER BY ts_ms DESC LIMIT 1`,
+  );
 
   return {
     insertEvent: (e: EventRow): boolean => {
@@ -107,6 +130,13 @@ export function openDb(path: string): PolarisDb {
     },
     markNotified: (ruleName: string, dedupKey: string, sentAtMs: number): void => {
       notifyInsertStmt.run(ruleName, dedupKey, sentAtMs);
+    },
+    insertRateLimitSample: (s: RateLimitSample): void => {
+      rateInsertStmt.run(s);
+    },
+    getLatestRateLimitSample: (): RateLimitSample | null => {
+      const row = rateLatestStmt.get() as RateLimitSample | undefined;
+      return row ?? null;
     },
     close: (): void => {
       db.close();

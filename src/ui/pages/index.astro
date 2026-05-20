@@ -313,6 +313,59 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         opacity: 0.12;
         stroke: none;
       }
+      .rate-limits {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 0.75rem 1rem;
+        margin-top: 0.5rem;
+        font-size: 0.8125rem;
+      }
+      .rate-meta {
+        color: var(--fg-dim);
+        font-size: 0.75rem;
+        margin-bottom: 0.5rem;
+      }
+      .rate-bar {
+        display: grid;
+        grid-template-columns: 8rem 1fr 3rem;
+        gap: 0.5rem;
+        align-items: center;
+        margin: 0.4rem 0;
+      }
+      .rate-bar-label {
+        color: var(--fg);
+      }
+      .rate-bar-track {
+        background: rgba(255, 255, 255, 0.06);
+        height: 6px;
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      .rate-bar-fill {
+        height: 100%;
+        background: var(--accent);
+      }
+      .rate-bar-fill.warn {
+        background: #ffaa00;
+      }
+      .rate-bar-fill.danger {
+        background: var(--danger);
+      }
+      .rate-bar-value {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        color: var(--fg-dim);
+      }
+      .rate-raw {
+        margin-top: 0.5rem;
+        font-size: 0.7rem;
+        color: var(--fg-dim);
+        max-height: 160px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
     </style>
   </head>
   <body>
@@ -356,6 +409,9 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         <p class="muted" id="range-meta"></p>
         <h2>Projects (last 30 days)</h2>
         <div id="projects" class="projects"></div>
+
+        <h2>Rate limits</h2>
+        <div id="rate-limits" class="rate-limits"></div>
       </div>
 
       <div id="tab-sessions" hidden>
@@ -557,6 +613,86 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         } catch (e) {
           $("projects").innerHTML =
             '<div class="error">Failed to load projects: ' + escape(e.message) + "</div>";
+        }
+      }
+
+      // ── Rate limits ──────────────────────────────────────────────────────
+      function rateBar(label, utilization) {
+        const u = Math.max(0, Math.min(1, Number(utilization) || 0));
+        const pct = (u * 100).toFixed(0);
+        const cls = u >= 0.9 ? "danger" : u >= 0.75 ? "warn" : "";
+        return (
+          '<div class="rate-bar"><div class="rate-bar-label">' +
+          escape(label) +
+          '</div><div class="rate-bar-track"><div class="rate-bar-fill ' +
+          cls +
+          '" style="width:' +
+          pct +
+          '%"></div></div><div class="rate-bar-value">' +
+          pct +
+          "%</div></div>"
+        );
+      }
+      function renderRateLimits(data) {
+        const pane = $("rate-limits");
+        if (data.error) {
+          pane.innerHTML =
+            '<div class="rate-meta">Last poll: ' +
+            new Date(data.tsMs).toISOString() +
+            " · HTTP " +
+            data.httpStatus +
+            '</div><div class="error">' +
+            escape(data.error) +
+            "</div>";
+          return;
+        }
+        const payload = data.payload || {};
+        const candidates = [
+          ["5-hour window", payload.five_hour],
+          ["7-day window", payload.seven_day],
+          ["7-day Opus window", payload.seven_day_opus],
+        ];
+        const bars = [];
+        for (const [label, window] of candidates) {
+          if (window && typeof window === "object" && "utilization" in window) {
+            bars.push(rateBar(label, window.utilization));
+          }
+        }
+        const meta =
+          '<div class="rate-meta">Last poll: ' +
+          new Date(data.tsMs).toISOString() +
+          " · HTTP " +
+          data.httpStatus +
+          "</div>";
+        if (bars.length > 0) {
+          pane.innerHTML = meta + bars.join("");
+          return;
+        }
+        // Unknown response shape — show raw JSON so we can iterate without code changes.
+        pane.innerHTML =
+          meta +
+          '<div class="rate-raw">' +
+          escape(JSON.stringify(payload, null, 2)) +
+          "</div>";
+      }
+      async function loadRateLimits() {
+        try {
+          const res = await apiFetch("/v1/rate-limits");
+          if (res.status === 503) {
+            const body = await res.json();
+            $("rate-limits").innerHTML =
+              '<p class="muted">' +
+              (body.configured
+                ? "Waiting for first poll (every ~8 min)."
+                : "OAuth credentials not found at ~/.claude/.credentials.json — rate-limit tracking is disabled.") +
+              "</p>";
+            return;
+          }
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          renderRateLimits(await res.json());
+        } catch (e) {
+          $("rate-limits").innerHTML =
+            '<div class="error">Failed to load rate limits: ' + escape(e.message) + "</div>";
         }
       }
 
@@ -794,6 +930,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         showDashboard();
         loadMetrics("today");
         loadProjects();
+        loadRateLimits();
       });
       document.querySelectorAll(".tabs button[data-tab]").forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -858,6 +995,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         showDashboard();
         loadMetrics("today");
         loadProjects();
+        loadRateLimits();
       } else {
         showAuth();
       }

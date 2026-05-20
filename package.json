@@ -1,6 +1,6 @@
 {
   "name": "@onestepat4time/polaris",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "description": "Self-hosted lean control plane for AI coding agents. Delegate via API, monitor live.",
   "license": "MIT",
