@@ -15,6 +15,7 @@ import { ingest } from "./ingest/ingest.js";
 import { type WatcherHandle, startWatcher } from "./ingest/jsonl-watcher.js";
 import { type TimeRange, aggregate, resolveRange } from "./metrics/aggregator.js";
 import { loadPricing } from "./metrics/pricing.js";
+import { type EngineHandle, startEngine } from "./rules/engine.js";
 
 const IngestBodySchema = z.object({
   sessionFile: z.string().min(1),
@@ -91,7 +92,29 @@ export async function buildServer(): Promise<BuildResult> {
     return sessionManager;
   };
 
+  // Rules engine: started only when at least one rule has a non-zero
+  // threshold AND a notification channel is configured. Polls every 5 min
+  // and deduplicates via the notifications_sent table.
+  let rulesEngine: EngineHandle | null = null;
+  if (
+    config.dailyCostThresholdUsd > 0 &&
+    config.telegramBotToken !== "" &&
+    config.telegramChatId !== ""
+  ) {
+    rulesEngine = startEngine(
+      db,
+      loadPricing(),
+      {
+        costThreshold: { thresholdUsd: config.dailyCostThresholdUsd },
+        telegram: { botToken: config.telegramBotToken, chatId: config.telegramChatId },
+        intervalMs: 5 * 60 * 1000,
+      },
+      (msg) => app.log.info(msg),
+    );
+  }
+
   app.addHook("onClose", async () => {
+    rulesEngine?.stop();
     watcher?.close();
     if (sessionManager) await sessionManager.close();
     db.close();
@@ -103,7 +126,7 @@ export async function buildServer(): Promise<BuildResult> {
   app.get("/health", () => ({
     status: "ok",
     service: "polaris",
-    version: "0.6.2",
+    version: "0.7.0",
   }));
 
   app.post("/v1/ingest", { config: { requireAuth: true } }, async (request, reply) => {

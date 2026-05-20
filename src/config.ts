@@ -20,6 +20,15 @@ const ConfigSchema = z.object({
   //       Tests point this at a fixture script so the gate doesn't need a real
   //       `claude` install. ADR-0010 v0.3 ACP-A.
   acpBin: z.string().default(""),
+  // why: Telegram bot HTTP API token for the cost-threshold notification
+  //       channel. Empty = channel disabled (no notifications fire). v0.7.0.
+  telegramBotToken: z.string().default(""),
+  // why: Telegram chat or channel ID to deliver alerts to. Empty = disabled.
+  telegramChatId: z.string().default(""),
+  // why: daily USD ceiling — when today's aggregated cost crosses it,
+  //       Polaris fires one Telegram alert (deduped per UTC day via the
+  //       notifications_sent table). 0 = disabled. v0.7.0.
+  dailyCostThresholdUsd: z.coerce.number().nonnegative().default(0),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -32,6 +41,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dbPath: env.POLARIS_DB_PATH,
     watchDir: env.POLARIS_WATCH_DIR,
     acpBin: env.POLARIS_ACP_BIN,
+    telegramBotToken: env.POLARIS_TELEGRAM_BOT_TOKEN,
+    telegramChatId: env.POLARIS_TELEGRAM_CHAT_ID,
+    dailyCostThresholdUsd: env.POLARIS_DAILY_COST_THRESHOLD_USD,
   });
   if (!parsed.success) {
     const issues = parsed.error.issues
