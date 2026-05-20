@@ -1,0 +1,57 @@
+# Polaris — minimal docker-compose example
+#
+# 1. Generate an auth token:  openssl rand -hex 32
+#    Paste it into POLARIS_AUTH_TOKEN below.
+# 2. (Optional) configure notification env vars — see docs/notifications.md
+# 3. docker compose up -d
+# 4. Open http://localhost:9180 and paste the token.
+
+services:
+  polaris:
+    image: ghcr.io/onestepat4time/polaris:v0.14.0
+    container_name: polaris
+    restart: unless-stopped
+    ports:
+      - "9180:9180"
+    environment:
+      # ── REQUIRED ─────────────────────────────────────────────────────────
+      # Shared bearer token for every /v1/* request. Generate with:
+      #   openssl rand -hex 32
+      POLARIS_AUTH_TOKEN: change-me-to-something-random
+
+      # ── COMMON KNOBS ─────────────────────────────────────────────────────
+      POLARIS_PORT: 9180
+      POLARIS_HOST: 0.0.0.0      # listen on all interfaces inside the container
+      POLARIS_DB_PATH: /data/polaris.db
+      POLARIS_WATCH_DIR: /claude/projects
+
+      # ── NOTIFICATIONS (all optional) ─────────────────────────────────────
+      # Telegram. Get token from @BotFather, chat_id from /getUpdates.
+      # POLARIS_TELEGRAM_BOT_TOKEN: "123456789:ABC..."
+      # POLARIS_TELEGRAM_CHAT_ID: "987654321"
+
+      # Slack incoming webhook
+      # POLARIS_SLACK_WEBHOOK_URL: "https://hooks.slack.com/services/T/X/Y"
+
+      # Discord webhook
+      # POLARIS_DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/123/abc"
+
+      # ── RULES (all optional; engine starts when channels + any rule are set) ──
+      # Alert when today's spend crosses this $ ceiling (one alert per UTC day).
+      # POLARIS_DAILY_COST_THRESHOLD_USD: 20
+
+      # Alert when any Anthropic rate-limit window crosses N% utilization
+      # (one alert per window per UTC day). Requires ~/.claude/.credentials.json
+      # to be mounted so the OAuth poller can fetch /api/oauth/usage.
+      # POLARIS_RATE_LIMIT_NEAR_THRESHOLD_PCT: 80
+
+    volumes:
+      # Persistent SQLite + WAL files
+      - polaris-data:/data
+      # Read-only mount of your local Claude Code data so Polaris can watch
+      # JSONL files in real-time and (optionally) read OAuth credentials for
+      # the rate-limit poller.
+      - ${HOME}/.claude:/claude:ro
+
+volumes:
+  polaris-data:
