@@ -67,4 +67,20 @@ describe("static UI mount", () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toMatch(/application\/json/);
   });
+
+  it.runIf(uiBuilt)(
+    "CSS rules for JS-injected elements are global (no Astro scope attribute)",
+    async () => {
+      // Regression for v0.6.0 visual bug: Astro scoped CSS used attribute
+      // selectors like `.session-card[data-astro-cid-XXXX]`, which never
+      // matched HTML injected at runtime by the inline <script>. The result
+      // was unstyled cards and KPIs. The fix is `<style is:global>`.
+      const res = await app.inject({ method: "GET", url: "/" });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toMatch(/\.session-card\s*\{/);
+      expect(res.body).toMatch(/\.kpi\s*\{/);
+      expect(res.body).not.toMatch(/\.session-card\[data-astro-cid-/);
+      expect(res.body).not.toMatch(/\.kpi\[data-astro-cid-/);
+    },
+  );
 });
