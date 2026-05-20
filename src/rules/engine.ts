@@ -4,11 +4,13 @@ import type { PricingTable } from "../metrics/pricing.js";
 import { type CostThresholdConfig, type RuleMatch, checkCostThreshold } from "./cost-threshold.js";
 import { type DailySummaryConfig, checkDailySummary } from "./daily-summary.js";
 import { type RateLimitNearConfig, checkRateLimitNear } from "./rate-limit-near.js";
+import { type SessionFailedConfig, checkSessionFailed } from "./session-failed.js";
 
 export interface EngineConfig {
   costThreshold: CostThresholdConfig | null;
   rateLimitNear?: RateLimitNearConfig | null;
   dailySummary?: DailySummaryConfig | null;
+  sessionFailed?: SessionFailedConfig | null;
   channels: Channel[];
   intervalMs: number;
 }
@@ -38,6 +40,9 @@ export function evaluateRules(
   if (cfg.dailySummary !== null && cfg.dailySummary !== undefined) {
     const m = checkDailySummary(db, pricing, cfg.dailySummary);
     if (m !== null) matches.push(m);
+  }
+  if (cfg.sessionFailed !== null && cfg.sessionFailed !== undefined) {
+    matches.push(...checkSessionFailed(cfg.sessionFailed));
   }
   return matches;
 }

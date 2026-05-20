@@ -50,6 +50,13 @@ export type SessionListener = (event: SessionEvent) => void;
 
 export type ApprovalOutcome = { outcome: "selected"; optionId: string } | { outcome: "cancelled" };
 
+export interface SessionFailure {
+  sessionId: string;
+  cwd: string;
+  reason: string;
+  atMs: number;
+}
+
 export interface SessionManager {
   createSession(opts: CreateSessionOptions): Promise<SessionRecord>;
   getSession(id: string): SessionRecord | undefined;
@@ -61,8 +68,16 @@ export interface SessionManager {
   listApprovals(sessionId: string): PendingApproval[];
   getApproval(sessionId: string, approvalId: string): PendingApproval | undefined;
   respondToApproval(sessionId: string, approvalId: string, response: ApprovalOutcome): boolean;
+  /**
+   * Returns the most recent failures (sendPrompt rejections) up to a cap of
+   * MAX_FAILURE_BUFFER entries, oldest-first. The buffer is in-memory only;
+   * a server restart clears it. Used by the session-failed rule (v0.15.0).
+   */
+  recentFailures(): SessionFailure[];
   readonly initialized: Promise<void>;
 }
+
+export const MAX_FAILURE_BUFFER = 100;
 
 export interface SessionManagerOptions {
   binCmd?: string;
@@ -101,6 +116,7 @@ class SessionManagerImpl implements SessionManager {
   private readonly client: AcpJsonRpcClient;
   private readonly sessions = new Map<string, InternalSession>();
   private readonly approvalTimeoutMs: number;
+  private readonly failures: SessionFailure[] = [];
   private closedFlag = false;
 
   constructor(options: SessionManagerOptions = {}) {
@@ -181,9 +197,26 @@ class SessionManagerImpl implements SessionManager {
       if (res.usage !== undefined) result.usage = res.usage;
       if (res.userMessageId !== undefined) result.userMessageId = res.userMessageId;
       return result;
+    } catch (e) {
+      this.recordFailure(rec, e instanceof Error ? e.message : String(e));
+      throw e;
     } finally {
       if (rec.status === "prompting") rec.status = "idle";
     }
+  }
+
+  private recordFailure(rec: InternalSession, reason: string): void {
+    this.failures.push({
+      sessionId: rec.id,
+      cwd: rec.cwd,
+      reason,
+      atMs: Date.now(),
+    });
+    while (this.failures.length > MAX_FAILURE_BUFFER) this.failures.shift();
+  }
+
+  recentFailures(): SessionFailure[] {
+    return this.failures.slice();
   }
 
   async deleteSession(id: string): Promise<void> {

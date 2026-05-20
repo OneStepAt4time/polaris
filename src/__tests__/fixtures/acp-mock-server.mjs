@@ -96,6 +96,12 @@ function handle(msg) {
           kind: "agent_message",
           text: `echo:${userText}`,
         });
+        if (userText === "fail-prompt") {
+          // Used by session-failed.test.ts (v0.15.0). Returns a JSON-RPC error
+          // so SessionManager.sendPrompt rejects and records a failure.
+          replyError(msg.id, -32000, "simulated prompt failure");
+          return;
+        }
         if (userText === "ask-permission") {
           requestCounter += 1;
           const permId = requestCounter;
