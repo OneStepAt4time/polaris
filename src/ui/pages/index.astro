@@ -618,7 +618,12 @@ const tagline = "Self-hosted observatory for your AI coding agents";
 
       // ── Rate limits ──────────────────────────────────────────────────────
       function rateBar(label, utilization) {
-        const u = Math.max(0, Math.min(1, Number(utilization) || 0));
+        const raw = Number(utilization) || 0;
+        // Anthropic's /api/oauth/usage returns utilization as 0-100. Some
+        // CCMeter docs imply 0-1; accept both: anything > 1 is treated as
+        // already-percent, anything <= 1 as a fraction.
+        const normalized = raw > 1 ? raw / 100 : raw;
+        const u = Math.max(0, Math.min(1, normalized));
         const pct = (u * 100).toFixed(0);
         const cls = u >= 0.9 ? "danger" : u >= 0.75 ? "warn" : "";
         return (
@@ -632,6 +637,13 @@ const tagline = "Self-hosted observatory for your AI coding agents";
           pct +
           "%</div></div>"
         );
+      }
+      function prettyWindowLabel(key) {
+        return key
+          .replace(/_/g, " ")
+          .replace(/\bfive\b/i, "5-hour")
+          .replace(/\bseven day\b/i, "7-day")
+          .replace(/\b\w/g, (c) => c.toUpperCase());
       }
       function renderRateLimits(data) {
         const pane = $("rate-limits");
@@ -647,15 +659,22 @@ const tagline = "Self-hosted observatory for your AI coding agents";
           return;
         }
         const payload = data.payload || {};
-        const candidates = [
-          ["5-hour window", payload.five_hour],
-          ["7-day window", payload.seven_day],
-          ["7-day Opus window", payload.seven_day_opus],
-        ];
+        // Dynamically render every top-level field that looks like a usage
+        // window (has a numeric `utilization`). Real Anthropic responses
+        // include more windows than the CCMeter-documented three.
         const bars = [];
-        for (const [label, window] of candidates) {
-          if (window && typeof window === "object" && "utilization" in window) {
-            bars.push(rateBar(label, window.utilization));
+        for (const [key, value] of Object.entries(payload)) {
+          if (
+            value !== null &&
+            typeof value === "object" &&
+            "utilization" in value &&
+            (typeof value.utilization === "number" ||
+              typeof value.utilization === "string")
+          ) {
+            const num = Number(value.utilization);
+            if (Number.isFinite(num) && num > 0) {
+              bars.push(rateBar(prettyWindowLabel(key), num));
+            }
           }
         }
         const meta =
