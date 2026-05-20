@@ -14,6 +14,7 @@ import { type PolarisDb, openDb } from "./db.js";
 import { ingest } from "./ingest/ingest.js";
 import { type WatcherHandle, startWatcher } from "./ingest/jsonl-watcher.js";
 import { type TimeRange, aggregate, resolveRange } from "./metrics/aggregator.js";
+import { aggregateHeatmap, isHeatmapMetric } from "./metrics/heatmap.js";
 import { loadPricing } from "./metrics/pricing.js";
 import { aggregateByProject } from "./metrics/projects.js";
 import { loadOAuthCredentials } from "./rate-limit/oauth.js";
@@ -142,7 +143,7 @@ export async function buildServer(): Promise<BuildResult> {
   app.get("/health", () => ({
     status: "ok",
     service: "polaris",
-    version: "0.10.0",
+    version: "0.11.0",
   }));
 
   app.post("/v1/ingest", { config: { requireAuth: true } }, async (request, reply) => {
@@ -176,6 +177,22 @@ export async function buildServer(): Promise<BuildResult> {
     }
     const pricing = loadPricing();
     return reply.send(aggregateByProject(db, pricing, daysRaw));
+  });
+
+  app.get("/v1/heatmap", { config: { requireAuth: true } }, async (request, reply) => {
+    const query = request.query as { days?: string; metric?: string };
+    const daysRaw = query.days !== undefined ? Number(query.days) : 180;
+    if (!Number.isFinite(daysRaw) || daysRaw <= 0) {
+      return reply.code(400).send({ error: "Invalid days. Must be a positive integer." });
+    }
+    const metricRaw = query.metric ?? "cost";
+    if (!isHeatmapMetric(metricRaw)) {
+      return reply.code(400).send({
+        error: "Invalid metric. Allowed: cost, events, outputTokens, sessions.",
+      });
+    }
+    const pricing = loadPricing();
+    return reply.send(aggregateHeatmap(db, pricing, metricRaw, daysRaw));
   });
 
   app.get("/v1/rate-limits", { config: { requireAuth: true } }, async (_request, reply) => {

@@ -366,6 +366,64 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         white-space: pre-wrap;
         word-break: break-all;
       }
+      .heatmap-tabs {
+        display: flex;
+        gap: 0.4rem;
+        margin: 0.5rem 0;
+        flex-wrap: wrap;
+      }
+      .heatmap-tabs button {
+        background: transparent;
+        color: var(--fg-dim);
+        border: 1px solid var(--border);
+        font-size: 0.75rem;
+        padding: 0.3rem 0.7rem;
+        cursor: pointer;
+      }
+      .heatmap-tabs button.active {
+        background: var(--accent);
+        color: #000;
+        border-color: var(--accent);
+        font-weight: 600;
+      }
+      .heatmap {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 0.75rem;
+        overflow-x: auto;
+      }
+      .heatmap-grid {
+        display: grid;
+        grid-template-rows: repeat(7, 1fr);
+        grid-auto-flow: column;
+        grid-auto-columns: 11px;
+        gap: 2px;
+      }
+      .heatmap-cell {
+        width: 11px;
+        height: 11px;
+        background: rgba(255, 213, 74, 0);
+        border-radius: 2px;
+      }
+      .heatmap-cell.lvl-1 { background: rgba(255, 213, 74, 0.18); }
+      .heatmap-cell.lvl-2 { background: rgba(255, 213, 74, 0.38); }
+      .heatmap-cell.lvl-3 { background: rgba(255, 213, 74, 0.62); }
+      .heatmap-cell.lvl-4 { background: rgba(255, 213, 74, 0.95); }
+      .heatmap-cell.empty { background: rgba(255, 255, 255, 0.04); }
+      .heatmap-legend {
+        display: flex;
+        gap: 0.4rem;
+        align-items: center;
+        margin-top: 0.5rem;
+        font-size: 0.7rem;
+        color: var(--fg-dim);
+      }
+      .heatmap-legend .swatch {
+        width: 11px;
+        height: 11px;
+        border-radius: 2px;
+      }
     </style>
   </head>
   <body>
@@ -407,6 +465,16 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         <div id="kpis" class="kpis"></div>
         <div id="per-model" class="per-model"></div>
         <p class="muted" id="range-meta"></p>
+
+        <h2>Activity heatmap (last 180 days)</h2>
+        <div class="heatmap-tabs" role="tablist">
+          <button data-heatmap-metric="cost" class="active">Cost</button>
+          <button data-heatmap-metric="events">Events</button>
+          <button data-heatmap-metric="outputTokens">Output tokens</button>
+          <button data-heatmap-metric="sessions">Sessions</button>
+        </div>
+        <div id="heatmap" class="heatmap"></div>
+
         <h2>Projects (last 30 days)</h2>
         <div id="projects" class="projects"></div>
 
@@ -613,6 +681,78 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         } catch (e) {
           $("projects").innerHTML =
             '<div class="error">Failed to load projects: ' + escape(e.message) + "</div>";
+        }
+      }
+
+      // ── Activity heatmap ─────────────────────────────────────────────────
+      let currentHeatmapMetric = "cost";
+      function heatmapLevel(value, thresholds) {
+        if (value <= 0) return 0;
+        if (value <= thresholds[0]) return 1;
+        if (value <= thresholds[1]) return 2;
+        if (value <= thresholds[2]) return 3;
+        return 4;
+      }
+      function quartileThresholds(values) {
+        const nonZero = values.filter((v) => v > 0).sort((a, b) => a - b);
+        if (nonZero.length === 0) return [0, 0, 0];
+        const q = (p) => nonZero[Math.min(nonZero.length - 1, Math.floor(nonZero.length * p))];
+        return [q(0.25), q(0.5), q(0.75)];
+      }
+      function formatHeatmapValue(metric, value) {
+        if (metric === "cost") return formatUsd(value);
+        if (metric === "outputTokens") return formatTokens(value) + " out";
+        if (metric === "sessions") return value + " sess";
+        return value + " ev";
+      }
+      function renderHeatmap(data) {
+        const pane = $("heatmap");
+        if (!data.dailyValues?.length) {
+          pane.innerHTML = '<p class="muted">No activity data yet.</p>';
+          return;
+        }
+        const thresholds = quartileThresholds(data.dailyValues);
+        const cells = [];
+        const dayMs = 24 * 60 * 60 * 1000;
+        // Pad with empty cells so the first column aligns to the right day-of-week.
+        // grid-auto-flow: column means cells fill top-to-bottom, then start a new column.
+        // We want row 0 = Sunday so we render N empty cells if firstDayOfWeek > 0.
+        for (let i = 0; i < data.firstDayOfWeekUtc; i++) {
+          cells.push('<div class="heatmap-cell empty" title="(pad)"></div>');
+        }
+        for (let i = 0; i < data.dailyValues.length; i++) {
+          const value = data.dailyValues[i];
+          const lvl = heatmapLevel(value, thresholds);
+          const date = new Date(data.fromMs + i * dayMs);
+          const dateStr = date.toISOString().slice(0, 10);
+          const cls = value <= 0 ? "empty" : "lvl-" + lvl;
+          const title = dateStr + ": " + formatHeatmapValue(data.metric, value);
+          cells.push(
+            '<div class="heatmap-cell ' + cls + '" title="' + escape(title) + '"></div>',
+          );
+        }
+        const legend =
+          '<div class="heatmap-legend"><span>Less</span>' +
+          '<span class="swatch heatmap-cell empty"></span>' +
+          '<span class="swatch heatmap-cell lvl-1"></span>' +
+          '<span class="swatch heatmap-cell lvl-2"></span>' +
+          '<span class="swatch heatmap-cell lvl-3"></span>' +
+          '<span class="swatch heatmap-cell lvl-4"></span>' +
+          "<span>More</span></div>";
+        pane.innerHTML =
+          '<div class="heatmap-grid">' + cells.join("") + "</div>" + legend;
+      }
+      async function loadHeatmap(metric = currentHeatmapMetric) {
+        currentHeatmapMetric = metric;
+        try {
+          const res = await apiFetch(
+            "/v1/heatmap?days=180&metric=" + encodeURIComponent(metric),
+          );
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          renderHeatmap(await res.json());
+        } catch (e) {
+          $("heatmap").innerHTML =
+            '<div class="error">Failed to load heatmap: ' + escape(e.message) + "</div>";
         }
       }
 
@@ -949,7 +1089,17 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         showDashboard();
         loadMetrics("today");
         loadProjects();
+        loadHeatmap();
         loadRateLimits();
+      });
+      document.querySelectorAll(".heatmap-tabs button[data-heatmap-metric]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          document
+            .querySelectorAll(".heatmap-tabs button[data-heatmap-metric]")
+            .forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+          loadHeatmap(btn.dataset.heatmapMetric);
+        });
       });
       document.querySelectorAll(".tabs button[data-tab]").forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -1014,6 +1164,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         showDashboard();
         loadMetrics("today");
         loadProjects();
+        loadHeatmap();
         loadRateLimits();
       } else {
         showAuth();
