@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
@@ -9,6 +9,16 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..");
 const uiArtifact = resolve(repoRoot, "dist", "ui", "index.html");
 const uiBuilt = existsSync(uiArtifact);
+
+function readBundledCss(): string {
+  const html = readFileSync(uiArtifact, "utf-8");
+  const inlineMatch = html.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
+  const inline = inlineMatch?.[1] ?? "";
+  const externalDir = resolve(repoRoot, "dist", "ui", "_polaris");
+  if (!existsSync(externalDir)) return inline;
+  const cssFiles = readdirSync(externalDir).filter((f) => f.endsWith(".css"));
+  return inline + cssFiles.map((f) => readFileSync(resolve(externalDir, f), "utf-8")).join("\n");
+}
 
 describe("static UI mount", () => {
   let app: FastifyInstance;
@@ -70,17 +80,17 @@ describe("static UI mount", () => {
 
   it.runIf(uiBuilt)(
     "CSS rules for JS-injected elements are global (no Astro scope attribute)",
-    async () => {
+    () => {
       // Regression for v0.6.0 visual bug: Astro scoped CSS used attribute
       // selectors like `.session-card[data-astro-cid-XXXX]`, which never
       // matched HTML injected at runtime by the inline <script>. The result
       // was unstyled cards and KPIs. The fix is `<style is:global>`.
-      const res = await app.inject({ method: "GET", url: "/" });
-      expect(res.statusCode).toBe(200);
-      expect(res.body).toMatch(/\.session-card\s*\{/);
-      expect(res.body).toMatch(/\.kpi\s*\{/);
-      expect(res.body).not.toMatch(/\.session-card\[data-astro-cid-/);
-      expect(res.body).not.toMatch(/\.kpi\[data-astro-cid-/);
+      // Astro may inline OR externalize the CSS depending on size — read both.
+      const css = readBundledCss();
+      expect(css).toMatch(/\.session-card\s*\{/);
+      expect(css).toMatch(/\.kpi\s*\{/);
+      expect(css).not.toMatch(/\.session-card\[data-astro-cid-/);
+      expect(css).not.toMatch(/\.kpi\[data-astro-cid-/);
     },
   );
 });

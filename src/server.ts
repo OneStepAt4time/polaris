@@ -15,6 +15,7 @@ import { ingest } from "./ingest/ingest.js";
 import { type WatcherHandle, startWatcher } from "./ingest/jsonl-watcher.js";
 import { type TimeRange, aggregate, resolveRange } from "./metrics/aggregator.js";
 import { loadPricing } from "./metrics/pricing.js";
+import { aggregateByProject } from "./metrics/projects.js";
 import { type EngineHandle, startEngine } from "./rules/engine.js";
 
 const IngestBodySchema = z.object({
@@ -126,7 +127,7 @@ export async function buildServer(): Promise<BuildResult> {
   app.get("/health", () => ({
     status: "ok",
     service: "polaris",
-    version: "0.7.0",
+    version: "0.8.0",
   }));
 
   app.post("/v1/ingest", { config: { requireAuth: true } }, async (request, reply) => {
@@ -150,6 +151,16 @@ export async function buildServer(): Promise<BuildResult> {
     const { fromMs, toMs } = resolveRange(range);
     const pricing = loadPricing();
     return reply.send(aggregate(db, range, fromMs, toMs, pricing));
+  });
+
+  app.get("/v1/projects", { config: { requireAuth: true } }, async (request, reply) => {
+    const query = request.query as { days?: string };
+    const daysRaw = query.days !== undefined ? Number(query.days) : 30;
+    if (!Number.isFinite(daysRaw) || daysRaw <= 0) {
+      return reply.code(400).send({ error: "Invalid days. Must be a positive integer." });
+    }
+    const pricing = loadPricing();
+    return reply.send(aggregateByProject(db, pricing, daysRaw));
   });
 
   // ACP reachability probe. Spawns claude-agent-acp, performs the JSON-RPC
