@@ -266,6 +266,53 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         font-size: 0.75rem;
         padding: 0.3rem 0.6rem;
       }
+      .projects {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 0.75rem;
+        margin-top: 0.5rem;
+      }
+      .project-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 0.75rem 1rem;
+      }
+      .project-name {
+        font-size: 0.8125rem;
+        color: var(--accent);
+        word-break: break-all;
+        margin-bottom: 0.5rem;
+      }
+      .project-stats {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.5rem;
+        font-size: 0.75rem;
+        margin-bottom: 0.5rem;
+      }
+      .project-cost {
+        color: var(--fg);
+        font-weight: 600;
+      }
+      .project-meta {
+        color: var(--fg-dim);
+      }
+      .sparkline {
+        display: block;
+        width: 100%;
+        height: 32px;
+      }
+      .sparkline path {
+        fill: none;
+        stroke: var(--accent);
+        stroke-width: 1.5;
+      }
+      .sparkline .area {
+        fill: var(--accent);
+        opacity: 0.12;
+        stroke: none;
+      }
     </style>
   </head>
   <body>
@@ -307,6 +354,8 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         <div id="kpis" class="kpis"></div>
         <div id="per-model" class="per-model"></div>
         <p class="muted" id="range-meta"></p>
+        <h2>Projects (last 30 days)</h2>
+        <div id="projects" class="projects"></div>
       </div>
 
       <div id="tab-sessions" hidden>
@@ -448,6 +497,66 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         } catch (e) {
           $("kpis").innerHTML = '<div class="error">Failed to load: ' + escape(e.message) + "</div>";
           $("per-model").innerHTML = "";
+        }
+      }
+
+      // ── Projects (sparkline cards) ───────────────────────────────────────
+      function sparklineSvg(values) {
+        if (!Array.isArray(values) || values.length === 0) return "";
+        const w = 260;
+        const h = 32;
+        const max = Math.max(0.0001, ...values);
+        const step = values.length > 1 ? w / (values.length - 1) : 0;
+        const pts = values.map((v, i) => {
+          const x = i * step;
+          const y = h - (v / max) * (h - 2) - 1;
+          return x.toFixed(1) + "," + y.toFixed(1);
+        });
+        const linePath = "M" + pts.join(" L");
+        const areaPath = linePath + " L" + w.toFixed(1) + "," + h + " L0," + h + " Z";
+        return (
+          '<svg class="sparkline" viewBox="0 0 ' + w + " " + h +
+          '" preserveAspectRatio="none">' +
+          '<path class="area" d="' + areaPath + '"/>' +
+          '<path d="' + linePath + '"/>' +
+          "</svg>"
+        );
+      }
+      async function fetchProjects(days = 30) {
+        const res = await apiFetch("/v1/projects?days=" + days);
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      }
+      function renderProjects(data) {
+        if (!data.projects || data.projects.length === 0) {
+          $("projects").innerHTML = '<p class="muted">No project data in the last 30 days.</p>';
+          return;
+        }
+        $("projects").innerHTML = data.projects
+          .map(
+            (p) =>
+              '<div class="project-card"><div class="project-name">' +
+              escape(p.name) +
+              '</div><div class="project-stats"><span class="project-cost">' +
+              formatUsd(p.costUsd) +
+              '</span><span class="project-meta">' +
+              p.sessions +
+              " sess · " +
+              p.events +
+              " ev · " +
+              formatTokens(p.outputTokens) +
+              " out</span></div>" +
+              sparklineSvg(p.dailyCostUsd) +
+              "</div>",
+          )
+          .join("");
+      }
+      async function loadProjects() {
+        try {
+          renderProjects(await fetchProjects(30));
+        } catch (e) {
+          $("projects").innerHTML =
+            '<div class="error">Failed to load projects: ' + escape(e.message) + "</div>";
         }
       }
 
@@ -684,6 +793,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         setToken(t);
         showDashboard();
         loadMetrics("today");
+        loadProjects();
       });
       document.querySelectorAll(".tabs button[data-tab]").forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -747,6 +857,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       if (getToken()) {
         showDashboard();
         loadMetrics("today");
+        loadProjects();
       } else {
         showAuth();
       }
