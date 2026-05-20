@@ -174,4 +174,16 @@ describe("createSessionManager", () => {
     await mgr.close();
     await expect(mgr.createSession({ cwd: "/tmp/p" })).rejects.toThrow(/closed/);
   });
+
+  it("sendPrompt failures land in recentFailures() (v0.15.0)", async () => {
+    expect(mgr.recentFailures()).toEqual([]);
+    const rec = await mgr.createSession({ cwd: "/tmp/p" });
+    await expect(mgr.sendPrompt(rec.id, "fail-prompt")).rejects.toThrow(/simulated prompt failure/);
+    const failures = mgr.recentFailures();
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.sessionId).toBe(rec.id);
+    expect(failures[0]?.cwd).toBe("/tmp/p");
+    expect(failures[0]?.reason).toContain("simulated prompt failure");
+    expect(failures[0]?.atMs).toBeGreaterThan(0);
+  });
 });
