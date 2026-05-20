@@ -81,6 +81,18 @@ describe("aggregate", () => {
 describe("resolveRange", () => {
   const now = Date.parse("2026-05-17T15:30:00.000Z");
 
+  it("computes 1h window correctly", () => {
+    const r = resolveRange("1h", now);
+    expect(now - r.fromMs).toBe(60 * 60 * 1000);
+    expect(r.toMs).toBe(now);
+  });
+
+  it("computes 12h window correctly", () => {
+    const r = resolveRange("12h", now);
+    expect(now - r.fromMs).toBe(12 * 60 * 60 * 1000);
+    expect(r.toMs).toBe(now);
+  });
+
   it("computes today as UTC midnight to now", () => {
     const r = resolveRange("today", now);
     expect(new Date(r.fromMs).toISOString()).toBe("2026-05-17T00:00:00.000Z");
