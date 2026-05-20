@@ -30,7 +30,7 @@ const IngestBodySchema = z.object({
   content: z.string(),
 });
 
-const RangeSchema = z.enum(["today", "7d", "30d", "all"]).default("today");
+const RangeSchema = z.enum(["1h", "12h", "today", "7d", "30d", "all"]).default("today");
 
 const CreateSessionBodySchema = z.object({
   cwd: z.string().min(1),
@@ -161,7 +161,7 @@ export async function buildServer(): Promise<BuildResult> {
   app.get("/health", () => ({
     status: "ok",
     service: "polaris",
-    version: "0.12.0",
+    version: "0.13.0",
   }));
 
   app.post("/v1/ingest", { config: { requireAuth: true } }, async (request, reply) => {
@@ -178,7 +178,7 @@ export async function buildServer(): Promise<BuildResult> {
     const parsed = RangeSchema.safeParse(query.range);
     if (!parsed.success) {
       return reply.code(400).send({
-        error: "Invalid range. Allowed: today, 7d, 30d, all.",
+        error: "Invalid range. Allowed: 1h, 12h, today, 7d, 30d, all.",
       });
     }
     const range: TimeRange = parsed.data;

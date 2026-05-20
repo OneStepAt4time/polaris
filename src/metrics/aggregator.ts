@@ -28,8 +28,9 @@ export interface MetricsResult {
   perModel: PerModelMetrics[];
 }
 
-export type TimeRange = "today" | "7d" | "30d" | "all";
+export type TimeRange = "1h" | "12h" | "today" | "7d" | "30d" | "all";
 
+const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function resolveRange(
@@ -37,6 +38,10 @@ export function resolveRange(
   now: number = Date.now(),
 ): { fromMs: number; toMs: number } {
   switch (range) {
+    case "1h":
+      return { fromMs: now - HOUR_MS, toMs: now };
+    case "12h":
+      return { fromMs: now - 12 * HOUR_MS, toMs: now };
     case "today": {
       const today = new Date(now);
       today.setUTCHours(0, 0, 0, 0);
