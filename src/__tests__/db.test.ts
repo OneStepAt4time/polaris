@@ -50,4 +50,17 @@ describe("openDb", () => {
     expect(db2.countEvents()).toBe(0);
     db2.close();
   });
+
+  it("wasNotified is false before markNotified, true after, idempotent on repeat marks", () => {
+    const db = openDb(":memory:");
+    expect(db.wasNotified("cost-threshold-daily", "2026-05-20")).toBe(false);
+    db.markNotified("cost-threshold-daily", "2026-05-20", Date.now());
+    expect(db.wasNotified("cost-threshold-daily", "2026-05-20")).toBe(true);
+    // Marking twice does not raise; PRIMARY KEY (rule, dedup_key) absorbs the second write.
+    db.markNotified("cost-threshold-daily", "2026-05-20", Date.now());
+    expect(db.wasNotified("cost-threshold-daily", "2026-05-20")).toBe(true);
+    // Different dedup_key on the same rule is independent.
+    expect(db.wasNotified("cost-threshold-daily", "2026-05-21")).toBe(false);
+    db.close();
+  });
 });

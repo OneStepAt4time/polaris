@@ -18,6 +18,8 @@ export interface PolarisDb {
   insertEvent(e: EventRow): boolean;
   countEvents(): number;
   getEventsInRange(fromMs: number, toMs: number): EventRow[];
+  wasNotified(ruleName: string, dedupKey: string): boolean;
+  markNotified(ruleName: string, dedupKey: string, sentAtMs: number): void;
   close(): void;
 }
 
@@ -35,6 +37,12 @@ const MIGRATIONS: readonly string[] = [
    )`,
   "CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_file)",
   "CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts_ms)",
+  `CREATE TABLE IF NOT EXISTS notifications_sent (
+     rule_name TEXT NOT NULL,
+     dedup_key TEXT NOT NULL,
+     sent_at INTEGER NOT NULL,
+     PRIMARY KEY (rule_name, dedup_key)
+   )`,
 ];
 
 function runMigrations(db: DatabaseType): void {
@@ -75,6 +83,12 @@ export function openDb(path: string): PolarisDb {
             raw_cost_usd AS rawCostUsd
      FROM events WHERE ts_ms >= ? AND ts_ms <= ? ORDER BY ts_ms ASC`,
   );
+  const notifyExistsStmt = db.prepare(
+    "SELECT 1 FROM notifications_sent WHERE rule_name = ? AND dedup_key = ? LIMIT 1",
+  );
+  const notifyInsertStmt = db.prepare(
+    "INSERT OR REPLACE INTO notifications_sent (rule_name, dedup_key, sent_at) VALUES (?, ?, ?)",
+  );
 
   return {
     insertEvent: (e: EventRow): boolean => {
@@ -87,6 +101,12 @@ export function openDb(path: string): PolarisDb {
     },
     getEventsInRange: (fromMs: number, toMs: number): EventRow[] => {
       return rangeStmt.all(fromMs, toMs) as EventRow[];
+    },
+    wasNotified: (ruleName: string, dedupKey: string): boolean => {
+      return notifyExistsStmt.get(ruleName, dedupKey) !== undefined;
+    },
+    markNotified: (ruleName: string, dedupKey: string, sentAtMs: number): void => {
+      notifyInsertStmt.run(ruleName, dedupKey, sentAtMs);
     },
     close: (): void => {
       db.close();
