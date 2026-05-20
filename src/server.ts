@@ -16,6 +16,8 @@ import { type WatcherHandle, startWatcher } from "./ingest/jsonl-watcher.js";
 import { type TimeRange, aggregate, resolveRange } from "./metrics/aggregator.js";
 import { loadPricing } from "./metrics/pricing.js";
 import { aggregateByProject } from "./metrics/projects.js";
+import { loadOAuthCredentials } from "./rate-limit/oauth.js";
+import { type PollerHandle, startRateLimitPoller } from "./rate-limit/poller.js";
 import { type EngineHandle, startEngine } from "./rules/engine.js";
 
 const IngestBodySchema = z.object({
@@ -114,7 +116,17 @@ export async function buildServer(): Promise<BuildResult> {
     );
   }
 
+  // Rate-limit poller: started only when ~/.claude/.credentials.json is readable.
+  // Without OAuth credentials, /v1/rate-limits returns 503 and the UI section
+  // shows a "not configured" message. v0.9.0.
+  let ratePoller: PollerHandle | null = null;
+  const credentials = loadOAuthCredentials();
+  if (credentials !== null) {
+    ratePoller = startRateLimitPoller(db, { credentials }, (msg) => app.log.info(msg));
+  }
+
   app.addHook("onClose", async () => {
+    ratePoller?.stop();
     rulesEngine?.stop();
     watcher?.close();
     if (sessionManager) await sessionManager.close();
@@ -127,7 +139,7 @@ export async function buildServer(): Promise<BuildResult> {
   app.get("/health", () => ({
     status: "ok",
     service: "polaris",
-    version: "0.8.0",
+    version: "0.9.0",
   }));
 
   app.post("/v1/ingest", { config: { requireAuth: true } }, async (request, reply) => {
@@ -161,6 +173,30 @@ export async function buildServer(): Promise<BuildResult> {
     }
     const pricing = loadPricing();
     return reply.send(aggregateByProject(db, pricing, daysRaw));
+  });
+
+  app.get("/v1/rate-limits", { config: { requireAuth: true } }, async (_request, reply) => {
+    const sample = db.getLatestRateLimitSample();
+    if (sample === null) {
+      return reply.code(503).send({
+        error: "no rate-limit sample yet",
+        configured: ratePoller !== null,
+      });
+    }
+    let parsed: unknown = null;
+    if (sample.rawJson !== null) {
+      try {
+        parsed = JSON.parse(sample.rawJson);
+      } catch {
+        parsed = null;
+      }
+    }
+    return reply.send({
+      tsMs: sample.tsMs,
+      httpStatus: sample.httpStatus,
+      error: sample.error,
+      payload: parsed,
+    });
   });
 
   // ACP reachability probe. Spawns claude-agent-acp, performs the JSON-RPC
