@@ -226,6 +226,46 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         max-height: 360px;
         overflow-y: auto;
       }
+      .log-entry {
+        display: flex;
+        gap: 0.5rem;
+        padding: 0.2rem 0;
+        border-bottom: 1px solid var(--border);
+        font-size: 0.75rem;
+      }
+      .log-entry:last-child {
+        border-bottom: none;
+      }
+      .log-time {
+        color: var(--fg-dim);
+        flex: 0 0 auto;
+        font-variant-numeric: tabular-nums;
+      }
+      .log-kind {
+        color: var(--fg-dim);
+        flex: 0 0 auto;
+      }
+      .log-body {
+        flex: 1;
+        word-break: break-word;
+      }
+      .log-entry.approval {
+        background: rgba(255, 213, 74, 0.08);
+        border-left: 3px solid var(--accent);
+        padding-left: 0.5rem;
+      }
+      .log-entry.closed .log-kind {
+        color: var(--success);
+      }
+      .log-actions {
+        display: flex;
+        gap: 0.4rem;
+        margin-top: 0.4rem;
+      }
+      .log-actions button {
+        font-size: 0.75rem;
+        padding: 0.3rem 0.6rem;
+      }
     </style>
   </head>
   <body>
@@ -457,42 +497,183 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       function selectSession(id) {
         selectedSession = id;
         $("session-detail").hidden = false;
-        $("response-pane").className = "response-pane muted";
-        $("response-pane").textContent = "No prompt sent yet.";
+        $("response-pane").className = "response-pane";
+        $("response-pane").innerHTML = "";
+        appendLog("info", "Connecting to event stream…", null);
+        openEventStream(id);
         refreshSessions();
       }
       async function sendPrompt(text) {
         if (!selectedSession) return;
-        $("response-pane").className = "response-pane muted";
-        $("response-pane").textContent = "→ " + text + "\n\nWaiting for response…";
+        appendLog("send", "→ " + text, null);
         try {
           const res = await apiFetch(
             "/v1/sessions/" + encodeURIComponent(selectedSession) + "/messages",
             { method: "POST", body: JSON.stringify({ text }) },
           );
           if (!res.ok) {
-            $("response-pane").className = "response-pane error";
-            $("response-pane").textContent = "HTTP " + res.status + ": " + (await res.text());
+            appendLog("error", "HTTP " + res.status + ": " + (await res.text()), null);
             return;
           }
           const result = await res.json();
-          $("response-pane").className = "response-pane";
-          $("response-pane").textContent =
-            "→ " + text + "\n\nstopReason=" + result.stopReason +
-            "\nupdates=" + (result.updates?.length ?? 0);
+          appendLog(
+            "done",
+            "stopReason=" + result.stopReason + " · updates=" + (result.updates?.length ?? 0),
+            null,
+          );
         } catch (e) {
-          $("response-pane").className = "response-pane error";
-          $("response-pane").textContent = "Error: " + e.message;
+          appendLog("error", "Error: " + e.message, null);
         }
       }
       async function deleteSession() {
         if (!selectedSession) return;
+        closeEventStream();
         await apiFetch("/v1/sessions/" + encodeURIComponent(selectedSession), {
           method: "DELETE",
         });
         selectedSession = null;
         $("session-detail").hidden = true;
         refreshSessions();
+      }
+
+      // ── SSE event stream + approvals ─────────────────────────────────────
+      let sseCtrl = null;
+      function closeEventStream() {
+        if (sseCtrl) {
+          sseCtrl.abort();
+          sseCtrl = null;
+        }
+      }
+      function timeStamp(ts) {
+        const d = new Date(ts || Date.now());
+        return d.toTimeString().slice(0, 8);
+      }
+      function appendLog(kind, body, extra) {
+        const pane = $("response-pane");
+        const entry = document.createElement("div");
+        entry.className = "log-entry " + kind;
+        const t = document.createElement("span");
+        t.className = "log-time";
+        t.textContent = timeStamp(extra?.at);
+        const k = document.createElement("span");
+        k.className = "log-kind";
+        k.textContent = "[" + kind + "]";
+        const b = document.createElement("span");
+        b.className = "log-body";
+        b.textContent = body;
+        entry.append(t, k, b);
+        if (extra?.actions) entry.appendChild(extra.actions);
+        pane.appendChild(entry);
+        pane.scrollTop = pane.scrollHeight;
+        return entry;
+      }
+      function describeUpdate(payload) {
+        const p = payload?.params || {};
+        if (p.kind === "agent_message" || p.kind === "agent_message_chunk") {
+          const text = typeof p.content === "string" ? p.content : (p.text || "");
+          return "agent: " + text.slice(0, 140);
+        }
+        if (p.kind === "thinking" || p.kind === "agent_thought_chunk") {
+          return "thinking";
+        }
+        if (p.kind === "tool_call" || p.kind === "tool_call_update") {
+          const name = p.title || p.toolCallId || p.toolName || "tool";
+          return "tool: " + name + (p.status ? " · " + p.status : "");
+        }
+        if (p.kind === "plan") return "plan";
+        return payload?.method || JSON.stringify(payload).slice(0, 140);
+      }
+      function describeApproval(approval) {
+        const params = approval.params || {};
+        const tool = params.toolCall || {};
+        const label = tool.title || tool.toolName || tool.kind || "tool call";
+        return "approval needed: " + label;
+      }
+      function renderApproval(event) {
+        const params = event.approval.params || {};
+        const options = Array.isArray(params.options) ? params.options : [];
+        const actions = document.createElement("div");
+        actions.className = "log-actions";
+        const renderOpts = options.length
+          ? options
+          : [
+              { optionId: "allow_once", name: "Allow once", kind: "allow_once" },
+              { optionId: "reject_once", name: "Deny", kind: "reject_once" },
+            ];
+        for (const opt of renderOpts) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.textContent = opt.name || opt.optionId;
+          if (opt.kind && opt.kind.startsWith("reject")) btn.className = "danger";
+          else if (opt.kind === "allow_always") btn.className = "success";
+          btn.addEventListener("click", () =>
+            submitApproval(event.approval.approvalId, opt.optionId, actions),
+          );
+          actions.appendChild(btn);
+        }
+        appendLog("approval", describeApproval(event.approval), { at: event.at, actions });
+      }
+      async function submitApproval(approvalId, optionId, actionsEl) {
+        for (const btn of actionsEl.querySelectorAll("button")) btn.disabled = true;
+        try {
+          const res = await apiFetch(
+            "/v1/sessions/" + encodeURIComponent(selectedSession) +
+              "/approvals/" + encodeURIComponent(approvalId),
+            { method: "POST", body: JSON.stringify({ outcome: "selected", optionId }) },
+          );
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          actionsEl.textContent = "responded: " + optionId;
+        } catch (e) {
+          appendLog("error", "Approval failed: " + e.message, null);
+          for (const btn of actionsEl.querySelectorAll("button")) btn.disabled = false;
+        }
+      }
+      function handleSseEvent(event) {
+        if (event.type === "update") {
+          appendLog("update", describeUpdate(event.payload), { at: event.at });
+        } else if (event.type === "approval-request") {
+          renderApproval(event);
+        } else if (event.type === "session-closed") {
+          appendLog("closed", "session closed", { at: event.at });
+        }
+      }
+      async function openEventStream(id) {
+        closeEventStream();
+        const ctrl = new AbortController();
+        sseCtrl = ctrl;
+        const streamId = id;
+        try {
+          const res = await fetch(
+            "/v1/sessions/" + encodeURIComponent(id) + "/events",
+            { headers: { ...authHeader(), Accept: "text/event-stream" }, signal: ctrl.signal },
+          );
+          if (!res.ok || !res.body) {
+            appendLog("error", "Stream open failed: HTTP " + res.status, null);
+            return;
+          }
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = "";
+          while (selectedSession === streamId && sseCtrl === ctrl) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            let idx;
+            while ((idx = buf.indexOf("\n\n")) >= 0) {
+              const chunk = buf.slice(0, idx);
+              buf = buf.slice(idx + 2);
+              const dataLine = chunk.split("\n").find((l) => l.startsWith("data: "));
+              if (!dataLine) continue;
+              try {
+                handleSseEvent(JSON.parse(dataLine.slice(6)));
+              } catch (e) {
+                appendLog("error", "Bad SSE frame: " + e.message, null);
+              }
+            }
+          }
+        } catch (e) {
+          if (e.name !== "AbortError") appendLog("error", "Stream error: " + e.message, null);
+        }
       }
 
       // ── Wiring ───────────────────────────────────────────────────────────
@@ -526,6 +707,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         });
       });
       $("logout").addEventListener("click", () => {
+        closeEventStream();
         clearToken();
         showAuth();
       });
