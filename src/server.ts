@@ -131,6 +131,11 @@ export async function buildServer(): Promise<BuildResult> {
           config.rateLimitNearThresholdPct > 0
             ? { thresholdPct: config.rateLimitNearThresholdPct }
             : null,
+        // why: daily summary is automatically enabled when any threshold
+        //       rule is configured + at least one channel is wired. Fires
+        //       once per UTC day at hour 23. No new env var — opt-in via
+        //       the same conditions that start the rules engine. v0.14.0.
+        dailySummary: { hourUtc: 23 },
         channels,
         intervalMs: 5 * 60 * 1000,
       },
@@ -161,7 +166,7 @@ export async function buildServer(): Promise<BuildResult> {
   app.get("/health", () => ({
     status: "ok",
     service: "polaris",
-    version: "0.13.0",
+    version: "0.14.0",
   }));
 
   app.post("/v1/ingest", { config: { requireAuth: true } }, async (request, reply) => {
