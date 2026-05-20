@@ -141,4 +141,33 @@ describe("startEngine().tick()", () => {
     expect(db.wasNotified("cost-threshold-daily", today)).toBe(false);
     expect(logs[0]).toContain("failed cost-threshold-daily");
   });
+
+  it("dispatches a rate-limit-near match per crossing window", async () => {
+    db.insertRateLimitSample({
+      tsMs: Date.now(),
+      httpStatus: 200,
+      rawJson: JSON.stringify({
+        five_hour: { utilization: 95 },
+        seven_day: { utilization: 85 },
+        seven_day_opus: { utilization: 10 },
+      }),
+      error: null,
+    });
+    const engine = startEngine(db, PRICING, {
+      costThreshold: null,
+      rateLimitNear: { thresholdPct: 80 },
+      telegram: { botToken: "b", chatId: "c" },
+      intervalMs: 60 * 60 * 1000,
+    });
+    try {
+      await engine.tick();
+    } finally {
+      engine.stop();
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const today = new Date().toISOString().slice(0, 10);
+    expect(db.wasNotified("rate-limit-near:five_hour", today)).toBe(true);
+    expect(db.wasNotified("rate-limit-near:seven_day", today)).toBe(true);
+    expect(db.wasNotified("rate-limit-near:seven_day_opus", today)).toBe(false);
+  });
 });
