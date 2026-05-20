@@ -9,6 +9,10 @@ import { createAcpJsonRpcClient } from "./acp/json-rpc-client.js";
 import { type SessionManager, createSessionManager } from "./acp/session-manager.js";
 import { type AcpProcessHandle, spawnAcpProcess } from "./acp/spawner.js";
 import { registerAuth } from "./auth.js";
+import type { Channel } from "./channels/channel.js";
+import { makeDiscordChannel } from "./channels/discord.js";
+import { makeSlackChannel } from "./channels/slack.js";
+import { makeTelegramChannel } from "./channels/telegram.js";
 import { type Config, loadConfig } from "./config.js";
 import { type PolarisDb, openDb } from "./db.js";
 import { ingest } from "./ingest/ingest.js";
@@ -97,12 +101,26 @@ export async function buildServer(): Promise<BuildResult> {
   };
 
   // Rules engine: started only when at least one rule has a non-zero
-  // threshold AND a notification channel is configured. Polls every 5 min
-  // and deduplicates via the notifications_sent table.
+  // threshold AND at least one notification channel is configured. Polls
+  // every 5 min and deduplicates via the notifications_sent table.
   let rulesEngine: EngineHandle | null = null;
-  const hasTelegram = config.telegramBotToken !== "" && config.telegramChatId !== "";
+  const channels: Channel[] = [];
+  if (config.telegramBotToken !== "" && config.telegramChatId !== "") {
+    channels.push(
+      makeTelegramChannel({
+        botToken: config.telegramBotToken,
+        chatId: config.telegramChatId,
+      }),
+    );
+  }
+  if (config.slackWebhookUrl !== "") {
+    channels.push(makeSlackChannel({ webhookUrl: config.slackWebhookUrl }));
+  }
+  if (config.discordWebhookUrl !== "") {
+    channels.push(makeDiscordChannel({ webhookUrl: config.discordWebhookUrl }));
+  }
   const hasAnyRule = config.dailyCostThresholdUsd > 0 || config.rateLimitNearThresholdPct > 0;
-  if (hasTelegram && hasAnyRule) {
+  if (channels.length > 0 && hasAnyRule) {
     rulesEngine = startEngine(
       db,
       loadPricing(),
@@ -113,7 +131,7 @@ export async function buildServer(): Promise<BuildResult> {
           config.rateLimitNearThresholdPct > 0
             ? { thresholdPct: config.rateLimitNearThresholdPct }
             : null,
-        telegram: { botToken: config.telegramBotToken, chatId: config.telegramChatId },
+        channels,
         intervalMs: 5 * 60 * 1000,
       },
       (msg) => app.log.info(msg),
@@ -143,7 +161,7 @@ export async function buildServer(): Promise<BuildResult> {
   app.get("/health", () => ({
     status: "ok",
     service: "polaris",
-    version: "0.11.0",
+    version: "0.12.0",
   }));
 
   app.post("/v1/ingest", { config: { requireAuth: true } }, async (request, reply) => {
