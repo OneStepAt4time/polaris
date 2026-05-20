@@ -34,6 +34,14 @@ const ConfigSchema = z.object({
   //       Requires OAuth credentials at ~/.claude/.credentials.json so the
   //       rate-limit poller has samples to evaluate. 0 = disabled. v0.10.0.
   rateLimitNearThresholdPct: z.coerce.number().nonnegative().default(0),
+  // why: Slack incoming-webhook URL. When set, alerts are delivered to Slack
+  //       in addition to any other configured channel. Empty = disabled.
+  //       v0.12.0.
+  slackWebhookUrl: z.string().default(""),
+  // why: Discord webhook URL. Polaris fan-outs to every configured channel;
+  //       a rule is marked sent as soon as at least one channel delivers.
+  //       Empty = disabled. v0.12.0.
+  discordWebhookUrl: z.string().default(""),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -50,6 +58,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     telegramChatId: env.POLARIS_TELEGRAM_CHAT_ID,
     dailyCostThresholdUsd: env.POLARIS_DAILY_COST_THRESHOLD_USD,
     rateLimitNearThresholdPct: env.POLARIS_RATE_LIMIT_NEAR_THRESHOLD_PCT,
+    slackWebhookUrl: env.POLARIS_SLACK_WEBHOOK_URL,
+    discordWebhookUrl: env.POLARIS_DISCORD_WEBHOOK_URL,
   });
   if (!parsed.success) {
     const issues = parsed.error.issues

@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Channel, ChannelResult } from "../channels/channel.js";
+import { makeTelegramChannel } from "../channels/telegram.js";
 import { type PolarisDb, openDb } from "../db.js";
 import type { PricingTable } from "../metrics/pricing.js";
 import { evaluateRules, startEngine } from "../rules/engine.js";
@@ -24,6 +26,21 @@ function seedHighCostToday(db: PolarisDb): void {
   });
 }
 
+interface RecordedSend {
+  channel: string;
+  text: string;
+}
+
+function recordingChannel(name: string, reply: ChannelResult, log: RecordedSend[]): Channel {
+  return {
+    name,
+    send: async (text) => {
+      log.push({ channel: name, text });
+      return reply;
+    },
+  };
+}
+
 describe("evaluateRules", () => {
   let db: PolarisDb;
 
@@ -38,7 +55,7 @@ describe("evaluateRules", () => {
     seedHighCostToday(db);
     const matches = evaluateRules(db, PRICING, {
       costThreshold: null,
-      telegram: null,
+      channels: [],
       intervalMs: 1000,
     });
     expect(matches).toEqual([]);
@@ -48,7 +65,7 @@ describe("evaluateRules", () => {
     seedHighCostToday(db);
     const matches = evaluateRules(db, PRICING, {
       costThreshold: { thresholdUsd: 5 },
-      telegram: null,
+      channels: [],
       intervalMs: 1000,
     });
     expect(matches).toHaveLength(1);
@@ -56,7 +73,7 @@ describe("evaluateRules", () => {
   });
 });
 
-describe("startEngine().tick()", () => {
+describe("startEngine().tick() — single Telegram channel", () => {
   let db: PolarisDb;
   let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -82,7 +99,7 @@ describe("startEngine().tick()", () => {
       PRICING,
       {
         costThreshold: { thresholdUsd: 5 },
-        telegram: { botToken: "bot:abc", chatId: "555" },
+        channels: [makeTelegramChannel({ botToken: "bot:abc", chatId: "555" })],
         intervalMs: 60 * 60 * 1000,
       },
       (m) => logs.push(m),
@@ -96,13 +113,14 @@ describe("startEngine().tick()", () => {
     const today = new Date().toISOString().slice(0, 10);
     expect(db.wasNotified("cost-threshold-daily", today)).toBe(true);
     expect(logs[0]).toContain("sent cost-threshold-daily");
+    expect(logs[0]).toContain("telegram");
   });
 
   it("does not re-dispatch on a second tick within the same dedup window", async () => {
     seedHighCostToday(db);
     const engine = startEngine(db, PRICING, {
       costThreshold: { thresholdUsd: 5 },
-      telegram: { botToken: "b", chatId: "c" },
+      channels: [makeTelegramChannel({ botToken: "b", chatId: "c" })],
       intervalMs: 60 * 60 * 1000,
     });
     try {
@@ -114,7 +132,7 @@ describe("startEngine().tick()", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("does NOT mark the notification when telegram fails", async () => {
+  it("does NOT mark the notification when the only channel fails", async () => {
     seedHighCostToday(db);
     fetchMock.mockResolvedValueOnce({
       ok: false,
@@ -127,7 +145,7 @@ describe("startEngine().tick()", () => {
       PRICING,
       {
         costThreshold: { thresholdUsd: 5 },
-        telegram: { botToken: "b", chatId: "c" },
+        channels: [makeTelegramChannel({ botToken: "b", chatId: "c" })],
         intervalMs: 60 * 60 * 1000,
       },
       (m) => logs.push(m),
@@ -156,7 +174,7 @@ describe("startEngine().tick()", () => {
     const engine = startEngine(db, PRICING, {
       costThreshold: null,
       rateLimitNear: { thresholdPct: 80 },
-      telegram: { botToken: "b", chatId: "c" },
+      channels: [makeTelegramChannel({ botToken: "b", chatId: "c" })],
       intervalMs: 60 * 60 * 1000,
     });
     try {
@@ -169,5 +187,89 @@ describe("startEngine().tick()", () => {
     expect(db.wasNotified("rate-limit-near:five_hour", today)).toBe(true);
     expect(db.wasNotified("rate-limit-near:seven_day", today)).toBe(true);
     expect(db.wasNotified("rate-limit-near:seven_day_opus", today)).toBe(false);
+  });
+});
+
+describe("startEngine().tick() — multi-channel fan-out", () => {
+  let db: PolarisDb;
+
+  beforeEach(() => {
+    db = openDb(":memory:");
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  it("delivers to every configured channel in parallel", async () => {
+    seedHighCostToday(db);
+    const sends: RecordedSend[] = [];
+    const channels: Channel[] = [
+      recordingChannel("telegram", { ok: true, status: 200 }, sends),
+      recordingChannel("slack", { ok: true, status: 200 }, sends),
+      recordingChannel("discord", { ok: true, status: 204 }, sends),
+    ];
+    const logs: string[] = [];
+    const engine = startEngine(
+      db,
+      PRICING,
+      { costThreshold: { thresholdUsd: 5 }, channels, intervalMs: 60 * 60 * 1000 },
+      (m) => logs.push(m),
+    );
+    try {
+      await engine.tick();
+    } finally {
+      engine.stop();
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    expect(sends).toHaveLength(3);
+    expect(sends.map((s) => s.channel).sort()).toEqual(["discord", "slack", "telegram"]);
+    expect(db.wasNotified("cost-threshold-daily", today)).toBe(true);
+    expect(logs[0]).toMatch(/sent cost-threshold-daily.*telegram.*slack.*discord/);
+  });
+
+  it("marks notified on partial success (at least one channel delivers)", async () => {
+    seedHighCostToday(db);
+    const sends: RecordedSend[] = [];
+    const channels: Channel[] = [
+      recordingChannel("telegram", { ok: false, status: 500, error: "boom" }, sends),
+      recordingChannel("slack", { ok: true, status: 200 }, sends),
+    ];
+    const logs: string[] = [];
+    const engine = startEngine(
+      db,
+      PRICING,
+      { costThreshold: { thresholdUsd: 5 }, channels, intervalMs: 60 * 60 * 1000 },
+      (m) => logs.push(m),
+    );
+    try {
+      await engine.tick();
+    } finally {
+      engine.stop();
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    expect(db.wasNotified("cost-threshold-daily", today)).toBe(true);
+    expect(logs[0]).toContain("sent cost-threshold-daily");
+    expect(logs[1]).toContain("partial failure on telegram");
+  });
+
+  it("does NOT mark notified when every channel fails (next tick retries)", async () => {
+    seedHighCostToday(db);
+    const sends: RecordedSend[] = [];
+    const channels: Channel[] = [
+      recordingChannel("telegram", { ok: false, error: "x" }, sends),
+      recordingChannel("slack", { ok: false, error: "y" }, sends),
+    ];
+    const engine = startEngine(db, PRICING, {
+      costThreshold: { thresholdUsd: 5 },
+      channels,
+      intervalMs: 60 * 60 * 1000,
+    });
+    try {
+      await engine.tick();
+    } finally {
+      engine.stop();
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    expect(db.wasNotified("cost-threshold-daily", today)).toBe(false);
   });
 });

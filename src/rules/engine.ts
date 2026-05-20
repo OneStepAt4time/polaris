@@ -1,8 +1,4 @@
-import {
-  type ChannelResult,
-  type TelegramConfig,
-  sendTelegramMessage,
-} from "../channels/telegram.js";
+import type { Channel } from "../channels/channel.js";
 import type { PolarisDb } from "../db.js";
 import type { PricingTable } from "../metrics/pricing.js";
 import { type CostThresholdConfig, type RuleMatch, checkCostThreshold } from "./cost-threshold.js";
@@ -11,7 +7,7 @@ import { type RateLimitNearConfig, checkRateLimitNear } from "./rate-limit-near.
 export interface EngineConfig {
   costThreshold: CostThresholdConfig | null;
   rateLimitNear?: RateLimitNearConfig | null;
-  telegram: TelegramConfig | null;
+  channels: Channel[];
   intervalMs: number;
 }
 
@@ -40,9 +36,29 @@ export function evaluateRules(
   return matches;
 }
 
-async function dispatch(match: RuleMatch, telegram: TelegramConfig | null): Promise<ChannelResult> {
-  if (telegram !== null) return sendTelegramMessage(telegram, match.message);
-  return { ok: false, error: "no notification channel configured" };
+interface DispatchSummary {
+  ok: boolean;
+  successes: string[];
+  failures: { channel: string; error: string }[];
+}
+
+async function dispatch(match: RuleMatch, channels: Channel[]): Promise<DispatchSummary> {
+  if (channels.length === 0) {
+    return { ok: false, successes: [], failures: [{ channel: "(none)", error: "no channels" }] };
+  }
+  const results = await Promise.all(
+    channels.map(async (c) => ({ name: c.name, result: await c.send(match.message) })),
+  );
+  const summary: DispatchSummary = { ok: false, successes: [], failures: [] };
+  for (const r of results) {
+    if (r.result.ok) summary.successes.push(r.name);
+    else summary.failures.push({ channel: r.name, error: r.result.error ?? "unknown" });
+  }
+  // Mark notified if at least one channel delivered. A partial failure is still
+  // "delivered" — the user got the alert somewhere. A total failure leaves
+  // wasNotified=false so the next tick retries.
+  summary.ok = summary.successes.length > 0;
+  return summary;
 }
 
 export function startEngine(
@@ -55,12 +71,18 @@ export function startEngine(
     const matches = evaluateRules(db, pricing, cfg);
     for (const match of matches) {
       if (db.wasNotified(match.ruleName, match.dedupKey)) continue;
-      const sent = await dispatch(match, cfg.telegram);
-      if (sent.ok) {
+      const summary = await dispatch(match, cfg.channels);
+      if (summary.ok) {
         db.markNotified(match.ruleName, match.dedupKey, Date.now());
-        log(`[rules] sent ${match.ruleName} (${match.dedupKey})`);
+        log(
+          `[rules] sent ${match.ruleName} (${match.dedupKey}) via ${summary.successes.join(",")}`,
+        );
+        for (const failure of summary.failures) {
+          log(`[rules] ${match.ruleName} partial failure on ${failure.channel}: ${failure.error}`);
+        }
       } else {
-        log(`[rules] failed ${match.ruleName}: ${sent.error ?? "unknown"}`);
+        const errors = summary.failures.map((f) => `${f.channel}=${f.error}`).join("; ");
+        log(`[rules] failed ${match.ruleName}: ${errors}`);
       }
     }
   };
