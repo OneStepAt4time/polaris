@@ -23,7 +23,7 @@ describe("server", () => {
     expect(res.json()).toEqual({
       status: "ok",
       service: "polaris",
-      version: "0.9.1",
+      version: "0.10.0",
     });
   });
 

@@ -6,9 +6,11 @@ import {
 import type { PolarisDb } from "../db.js";
 import type { PricingTable } from "../metrics/pricing.js";
 import { type CostThresholdConfig, type RuleMatch, checkCostThreshold } from "./cost-threshold.js";
+import { type RateLimitNearConfig, checkRateLimitNear } from "./rate-limit-near.js";
 
 export interface EngineConfig {
   costThreshold: CostThresholdConfig | null;
+  rateLimitNear?: RateLimitNearConfig | null;
   telegram: TelegramConfig | null;
   intervalMs: number;
 }
@@ -31,6 +33,9 @@ export function evaluateRules(
   if (cfg.costThreshold !== null) {
     const m = checkCostThreshold(db, pricing, cfg.costThreshold);
     if (m !== null) matches.push(m);
+  }
+  if (cfg.rateLimitNear !== null && cfg.rateLimitNear !== undefined) {
+    matches.push(...checkRateLimitNear(db, cfg.rateLimitNear));
   }
   return matches;
 }
