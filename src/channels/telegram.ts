@@ -1,18 +1,11 @@
+import type { Channel, ChannelResult, FetchLike } from "./channel.js";
+
+export type { ChannelResult, FetchLike } from "./channel.js";
+
 export interface TelegramConfig {
   botToken: string;
   chatId: string;
 }
-
-export interface ChannelResult {
-  ok: boolean;
-  status?: number;
-  error?: string;
-}
-
-export type FetchLike = (
-  url: string,
-  init: { method: string; headers: Record<string, string>; body: string },
-) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
 
 export async function sendTelegramMessage(
   cfg: TelegramConfig,
@@ -39,4 +32,11 @@ export async function sendTelegramMessage(
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
+}
+
+export function makeTelegramChannel(cfg: TelegramConfig, fetchImpl?: FetchLike): Channel {
+  return {
+    name: "telegram",
+    send: (text) => sendTelegramMessage(cfg, text, fetchImpl),
+  };
 }
