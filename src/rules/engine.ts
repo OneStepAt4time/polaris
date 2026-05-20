@@ -2,11 +2,13 @@ import type { Channel } from "../channels/channel.js";
 import type { PolarisDb } from "../db.js";
 import type { PricingTable } from "../metrics/pricing.js";
 import { type CostThresholdConfig, type RuleMatch, checkCostThreshold } from "./cost-threshold.js";
+import { type DailySummaryConfig, checkDailySummary } from "./daily-summary.js";
 import { type RateLimitNearConfig, checkRateLimitNear } from "./rate-limit-near.js";
 
 export interface EngineConfig {
   costThreshold: CostThresholdConfig | null;
   rateLimitNear?: RateLimitNearConfig | null;
+  dailySummary?: DailySummaryConfig | null;
   channels: Channel[];
   intervalMs: number;
 }
@@ -32,6 +34,10 @@ export function evaluateRules(
   }
   if (cfg.rateLimitNear !== null && cfg.rateLimitNear !== undefined) {
     matches.push(...checkRateLimitNear(db, cfg.rateLimitNear));
+  }
+  if (cfg.dailySummary !== null && cfg.dailySummary !== undefined) {
+    const m = checkDailySummary(db, pricing, cfg.dailySummary);
+    if (m !== null) matches.push(m);
   }
   return matches;
 }
