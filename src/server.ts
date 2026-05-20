@@ -99,16 +99,19 @@ export async function buildServer(): Promise<BuildResult> {
   // threshold AND a notification channel is configured. Polls every 5 min
   // and deduplicates via the notifications_sent table.
   let rulesEngine: EngineHandle | null = null;
-  if (
-    config.dailyCostThresholdUsd > 0 &&
-    config.telegramBotToken !== "" &&
-    config.telegramChatId !== ""
-  ) {
+  const hasTelegram = config.telegramBotToken !== "" && config.telegramChatId !== "";
+  const hasAnyRule = config.dailyCostThresholdUsd > 0 || config.rateLimitNearThresholdPct > 0;
+  if (hasTelegram && hasAnyRule) {
     rulesEngine = startEngine(
       db,
       loadPricing(),
       {
-        costThreshold: { thresholdUsd: config.dailyCostThresholdUsd },
+        costThreshold:
+          config.dailyCostThresholdUsd > 0 ? { thresholdUsd: config.dailyCostThresholdUsd } : null,
+        rateLimitNear:
+          config.rateLimitNearThresholdPct > 0
+            ? { thresholdPct: config.rateLimitNearThresholdPct }
+            : null,
         telegram: { botToken: config.telegramBotToken, chatId: config.telegramChatId },
         intervalMs: 5 * 60 * 1000,
       },
@@ -139,7 +142,7 @@ export async function buildServer(): Promise<BuildResult> {
   app.get("/health", () => ({
     status: "ok",
     service: "polaris",
-    version: "0.9.1",
+    version: "0.10.0",
   }));
 
   app.post("/v1/ingest", { config: { requireAuth: true } }, async (request, reply) => {

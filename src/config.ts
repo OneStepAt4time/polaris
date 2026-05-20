@@ -29,6 +29,11 @@ const ConfigSchema = z.object({
   //       Polaris fires one Telegram alert (deduped per UTC day via the
   //       notifications_sent table). 0 = disabled. v0.7.0.
   dailyCostThresholdUsd: z.coerce.number().nonnegative().default(0),
+  // why: % utilization on any Anthropic rate-limit window above which
+  //       Polaris fires a Telegram alert (one per window per UTC day).
+  //       Requires OAuth credentials at ~/.claude/.credentials.json so the
+  //       rate-limit poller has samples to evaluate. 0 = disabled. v0.10.0.
+  rateLimitNearThresholdPct: z.coerce.number().nonnegative().default(0),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -44,6 +49,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     telegramBotToken: env.POLARIS_TELEGRAM_BOT_TOKEN,
     telegramChatId: env.POLARIS_TELEGRAM_CHAT_ID,
     dailyCostThresholdUsd: env.POLARIS_DAILY_COST_THRESHOLD_USD,
+    rateLimitNearThresholdPct: env.POLARIS_RATE_LIMIT_NEAR_THRESHOLD_PCT,
   });
   if (!parsed.success) {
     const issues = parsed.error.issues
