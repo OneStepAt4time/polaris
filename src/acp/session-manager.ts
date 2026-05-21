@@ -4,6 +4,7 @@ import {
   type JsonRpcId,
   createAcpJsonRpcClient,
 } from "./json-rpc-client.js";
+import { type ProjectSettings, readProjectSettings } from "./project-settings.js";
 import { type AcpProcessHandle, spawnAcpProcess } from "./spawner.js";
 
 export type SessionStatus = "idle" | "prompting" | "closed";
@@ -13,6 +14,18 @@ export interface SessionUpdate {
   payload: unknown;
 }
 
+/**
+ * Summary of Claude Code-style files Polaris detected in cwd. Surfaced on the
+ * session record so the UI can show "loaded from .mcp.json (2 servers) +
+ * CLAUDE.md detected" instead of treating every session as a blank slate.
+ */
+export interface SessionSettingsInfo {
+  claudeMdDetected: boolean;
+  claudeSettingsDetected: boolean;
+  mcpServers: string[];
+  warnings: string[];
+}
+
 export interface SessionRecord {
   id: string;
   cwd: string;
@@ -20,11 +33,21 @@ export interface SessionRecord {
   lastActivityAt: number;
   status: SessionStatus;
   updates: SessionUpdate[];
+  settings?: SessionSettingsInfo;
 }
 
 export interface CreateSessionOptions {
   cwd: string;
   mcpServers?: unknown[];
+}
+
+function settingsToInfo(s: ProjectSettings): SessionSettingsInfo {
+  return {
+    claudeMdDetected: s.claudeMdPath !== null,
+    claudeSettingsDetected: s.claudeSettingsPath !== null,
+    mcpServers: s.mcpServers.map((m) => m.name),
+    warnings: s.warnings,
+  };
 }
 
 export interface PromptResult {
@@ -137,9 +160,24 @@ class SessionManagerImpl implements SessionManager {
   async createSession(opts: CreateSessionOptions): Promise<SessionRecord> {
     if (this.closedFlag) throw new Error("SessionManager is closed");
     await this.initialized;
+    // Project settings auto-read (v0.17.0). If the caller did not pass an
+    // explicit mcpServers list, load it from <cwd>/.mcp.json (Claude Code
+    // convention). Also detect CLAUDE.md and .claude/settings.json for UI
+    // visibility — claude-agent-acp itself reads those files based on cwd.
+    const projectSettings = readProjectSettings(opts.cwd);
+    const mcpFromOpts = Array.isArray(opts.mcpServers) ? opts.mcpServers : null;
+    const mcpServers =
+      mcpFromOpts !== null
+        ? mcpFromOpts
+        : projectSettings.mcpServers.map((m) => {
+            const out: Record<string, unknown> = { name: m.name, command: m.command };
+            if (m.args !== undefined) out.args = m.args;
+            if (m.env !== undefined) out.env = m.env;
+            return out;
+          });
     const res = await this.client.request<{ sessionId: string }>("session/new", {
       cwd: opts.cwd,
-      mcpServers: opts.mcpServers ?? [],
+      mcpServers,
     });
     const now = Date.now();
     const rec: InternalSession = {
@@ -151,6 +189,7 @@ class SessionManagerImpl implements SessionManager {
       updates: [],
       approvals: new Map(),
       listeners: new Set(),
+      settings: settingsToInfo(projectSettings),
     };
     this.sessions.set(rec.id, rec);
     return snapshot(rec);
@@ -344,7 +383,7 @@ class SessionManagerImpl implements SessionManager {
 }
 
 function snapshot(rec: InternalSession): SessionRecord {
-  return {
+  const out: SessionRecord = {
     id: rec.id,
     cwd: rec.cwd,
     createdAt: rec.createdAt,
@@ -352,6 +391,8 @@ function snapshot(rec: InternalSession): SessionRecord {
     status: rec.status,
     updates: rec.updates.slice(),
   };
+  if (rec.settings !== undefined) out.settings = rec.settings;
+  return out;
 }
 
 function toPublicApproval(p: PendingApprovalInternal): PendingApproval {

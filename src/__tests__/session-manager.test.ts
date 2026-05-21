@@ -186,4 +186,28 @@ describe("createSessionManager", () => {
     expect(failures[0]?.reason).toContain("simulated prompt failure");
     expect(failures[0]?.atMs).toBeGreaterThan(0);
   });
+
+  it("createSession reads .mcp.json + CLAUDE.md from cwd and surfaces settings (v0.17.0)", async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const fixtureDir = mkdtempSync(resolve(tmpdir(), "polaris-projset-"));
+    try {
+      writeFileSync(resolve(fixtureDir, "CLAUDE.md"), "# rules\n");
+      mkdirSync(resolve(fixtureDir, ".claude"));
+      writeFileSync(resolve(fixtureDir, ".claude", "settings.json"), "{}");
+      writeFileSync(
+        resolve(fixtureDir, ".mcp.json"),
+        JSON.stringify({
+          mcpServers: { fsmcp: { command: "uvx", args: ["mcp-server-fs"] } },
+        }),
+      );
+      const rec = await mgr.createSession({ cwd: fixtureDir });
+      expect(rec.settings?.claudeMdDetected).toBe(true);
+      expect(rec.settings?.claudeSettingsDetected).toBe(true);
+      expect(rec.settings?.mcpServers).toEqual(["fsmcp"]);
+      expect(rec.settings?.warnings).toEqual([]);
+    } finally {
+      rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
 });
