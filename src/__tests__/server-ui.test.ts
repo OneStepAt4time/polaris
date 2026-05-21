@@ -117,4 +117,19 @@ describe("static UI mount", () => {
       expect(res.body).toContain("renderToolCall");
     },
   );
+
+  it.runIf(uiBuilt)(
+    "v0.19.0 prompt textarea wires Enter/Shift+Enter/Ctrl+L/Esc + cwd history datalist",
+    async () => {
+      const res = await app.inject({ method: "GET", url: "/" });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('list="cwd-history"');
+      expect(res.body).toContain('id="cwd-history"');
+      expect(res.body).toContain("Enter to send");
+      expect(res.body).toContain("Shift+Enter");
+      expect(res.body).toContain("submitPromptFromTextarea");
+      expect(res.body).toContain("autoResizeTextarea");
+      expect(res.body).toContain("updateCwdHistory");
+    },
+  );
 });
