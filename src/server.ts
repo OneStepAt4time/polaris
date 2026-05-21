@@ -95,7 +95,7 @@ export async function buildServer(): Promise<BuildResult> {
   let sessionManager: SessionManager | null = null;
   const getSessionManager = (): SessionManager => {
     if (sessionManager === null) {
-      sessionManager = createSessionManager({ binCmd: config.acpBin });
+      sessionManager = createSessionManager({ binCmd: config.acpBin, store: db });
     }
     return sessionManager;
   };
@@ -172,7 +172,7 @@ export async function buildServer(): Promise<BuildResult> {
   app.get("/health", () => ({
     status: "ok",
     service: "polaris",
-    version: "0.17.0",
+    version: "0.18.0",
   }));
 
   app.post("/v1/ingest", { config: { requireAuth: true } }, async (request, reply) => {
@@ -294,8 +294,32 @@ export async function buildServer(): Promise<BuildResult> {
   });
 
   app.get("/v1/sessions", { config: { requireAuth: true } }, async (_request, reply) => {
-    const sessions = sessionManager ? sessionManager.listSessions() : [];
-    return reply.send({ sessions });
+    // Merge in-memory sessions (authoritative for live status) with persisted
+    // history (authoritative for ended sessions). In-memory wins on dup id.
+    const live = sessionManager ? sessionManager.listSessions() : [];
+    const liveIds = new Set(live.map((s) => s.id));
+    const persisted = db.listAcpSessions().filter((row) => !liveIds.has(row.id));
+    const history = persisted.map((row) => {
+      const session: Record<string, unknown> = {
+        id: row.id,
+        cwd: row.cwd,
+        createdAt: row.createdAt,
+        lastActivityAt: row.lastActivityAt,
+        status: row.status,
+        updates: [],
+        endedAt: row.endedAt,
+        endReason: row.endReason,
+      };
+      if (row.settingsJson !== null) {
+        try {
+          session.settings = JSON.parse(row.settingsJson);
+        } catch {
+          // ignore corrupt settings json
+        }
+      }
+      return session;
+    });
+    return reply.send({ sessions: [...live, ...history] });
   });
 
   app.get<{ Params: { id: string } }>(
@@ -305,6 +329,35 @@ export async function buildServer(): Promise<BuildResult> {
       const rec = sessionManager?.getSession(request.params.id);
       if (!rec) return reply.code(404).send({ error: "Session not found" });
       return reply.send(rec);
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    "/v1/sessions/:id/transcript",
+    { config: { requireAuth: true } },
+    async (request, reply) => {
+      const id = request.params.id;
+      const row = db.getAcpSession(id);
+      if (row === null) return reply.code(404).send({ error: "Session not found" });
+      const messages = db.getSessionMessages(id).map((m) => {
+        let payload: unknown = m.payloadJson;
+        try {
+          payload = JSON.parse(m.payloadJson);
+        } catch {
+          // keep raw string when payload is non-JSON
+        }
+        return { tsMs: m.tsMs, kind: m.kind, payload };
+      });
+      return reply.send({
+        sessionId: row.id,
+        cwd: row.cwd,
+        createdAt: row.createdAt,
+        lastActivityAt: row.lastActivityAt,
+        status: row.status,
+        endedAt: row.endedAt,
+        endReason: row.endReason,
+        messages,
+      });
     },
   );
 
