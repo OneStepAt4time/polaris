@@ -1041,12 +1041,31 @@ const tagline = "Self-hosted observatory for your AI coding agents";
           el.addEventListener("click", () => selectSession(el.dataset.sessionId));
         });
       }
-      function selectSession(id) {
+      async function selectSession(id) {
         selectedSession = id;
         $("session-detail").hidden = false;
         $("response-pane").className = "response-pane";
         $("response-pane").innerHTML = "";
         resetSessionLog();
+        // v0.18.0: replay any persisted transcript before opening the SSE
+        // stream. For sessions that ended in a previous server run, this is
+        // the only data we have; for active sessions, it brings the new view
+        // up to date with what happened before the user selected.
+        try {
+          const res = await apiFetch("/v1/sessions/" + encodeURIComponent(id) + "/transcript");
+          if (res.ok) {
+            const body = await res.json();
+            const messages = Array.isArray(body.messages) ? body.messages : [];
+            for (const m of messages) {
+              handleSseEvent({ type: "update", at: m.tsMs, payload: m.payload });
+            }
+            if (messages.length > 0) {
+              appendLog("info", "(end of saved transcript · " + messages.length + " events)", null);
+            }
+          }
+        } catch {
+          // best-effort — transcript is nice-to-have, live stream is the truth
+        }
         appendLog("info", "Connecting to event stream…", null);
         openEventStream(id);
         refreshSessions();
