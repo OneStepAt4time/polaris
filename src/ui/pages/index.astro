@@ -198,6 +198,31 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       .session-cwd {
         color: var(--fg);
       }
+      .tab-badge {
+        display: inline-block;
+        background: var(--accent);
+        color: #000;
+        font-size: 0.65rem;
+        font-weight: 600;
+        padding: 0 0.4rem;
+        border-radius: 999px;
+        margin-left: 0.4rem;
+        min-width: 1.2em;
+        text-align: center;
+        vertical-align: 1px;
+      }
+      .tab-badge[hidden] {
+        display: none;
+      }
+      .session-card.needs-approval {
+        border-left-color: #ffaa00;
+      }
+      .session-card.needs-approval::after {
+        content: " · needs approval";
+        color: #ffaa00;
+        font-size: 0.72rem;
+        margin-left: 0.4rem;
+      }
       .session-settings {
         font-size: 0.7rem;
         color: var(--fg-dim);
@@ -571,7 +596,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
     <section id="dashboard" hidden>
       <div class="tabs" role="tablist">
         <button data-tab="metrics" class="active">Metrics</button>
-        <button data-tab="sessions">Sessions</button>
+        <button data-tab="sessions">Sessions<span id="sessions-badge" class="tab-badge" hidden>0</span></button>
         <button id="logout" class="logout">Logout</button>
       </div>
 
@@ -676,6 +701,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       const showDashboard = () => {
         $("auth-pane").hidden = true;
         $("dashboard").hidden = false;
+        startSessionsPoll();
       };
 
       async function apiFetch(path, init = {}) {
@@ -999,10 +1025,70 @@ const tagline = "Self-hosted observatory for your AI coding agents";
           const { sessions } = await res.json();
           renderSessions(sessions);
           updateCwdHistory(sessions);
+          updateApprovalBadge(sessions);
         } catch (e) {
           $("sessions-list").innerHTML =
             '<div class="error">Failed to load: ' + escape(e.message) + "</div>";
         }
+      }
+      // v0.20.0: badge on the Sessions tab + browser notification when ANY
+      // session has a pending approval. Polled every 5s in the background.
+      let lastApprovalCount = 0;
+      function updateApprovalBadge(sessions) {
+        const total = sessions.reduce(
+          (n, s) => n + (Number(s.pendingApprovalsCount) || 0),
+          0,
+        );
+        const badge = $("sessions-badge");
+        if (total > 0) {
+          badge.textContent = String(total);
+          badge.hidden = false;
+        } else {
+          badge.hidden = true;
+        }
+        if (total > lastApprovalCount && total > 0) {
+          notifyApprovalNeeded(total, sessions);
+        }
+        lastApprovalCount = total;
+      }
+      function notifyApprovalNeeded(total, sessions) {
+        if (typeof Notification === "undefined") return;
+        const fire = () => {
+          const waiting = sessions
+            .filter((s) => (s.pendingApprovalsCount || 0) > 0)
+            .map((s) => s.cwd)
+            .slice(0, 3)
+            .join(", ");
+          new Notification("Polaris — approval needed", {
+            body:
+              total +
+              " session" +
+              (total > 1 ? "s" : "") +
+              " waiting" +
+              (waiting ? " · " + waiting : ""),
+            tag: "polaris-approval",
+          });
+        };
+        if (Notification.permission === "granted") fire();
+        else if (Notification.permission !== "denied") {
+          Notification.requestPermission().then((p) => {
+            if (p === "granted") fire();
+          });
+        }
+      }
+      // Background poll: only when the dashboard is unlocked. 5s feels
+      // responsive without hammering the server (the endpoint is cheap).
+      let sessionsPollHandle = null;
+      function startSessionsPoll() {
+        if (sessionsPollHandle !== null) return;
+        sessionsPollHandle = setInterval(() => {
+          refreshSessions().catch(() => {});
+        }, 5000);
+      }
+      function stopSessionsPoll() {
+        if (sessionsPollHandle === null) return;
+        clearInterval(sessionsPollHandle);
+        sessionsPollHandle = null;
       }
       function updateCwdHistory(sessions) {
         // v0.19.0: populate datalist with unique cwds from past + live
@@ -1048,10 +1134,17 @@ const tagline = "Self-hosted observatory for your AI coding agents";
           return;
         }
         $("sessions-list").innerHTML = sessions
-          .map(
-            (s) =>
-              '<div class="session-card' +
-              (s.id === selectedSession ? " selected" : "") +
+          .map((s) => {
+            const cls = [
+              "session-card",
+              s.id === selectedSession ? "selected" : "",
+              s.pendingApprovalsCount > 0 ? "needs-approval" : "",
+            ]
+              .filter(Boolean)
+              .join(" ");
+            return (
+              '<div class="' +
+              cls +
               '" data-session-id="' +
               escape(s.id) +
               '"><div class="session-header"><span class="session-cwd">' +
@@ -1062,8 +1155,9 @@ const tagline = "Self-hosted observatory for your AI coding agents";
               escape(s.status) +
               "</span></div>" +
               settingsBadges(s) +
-              "</div>",
-          )
+              "</div>"
+            );
+          })
           .join("");
         document.querySelectorAll(".session-card").forEach((el) => {
           el.addEventListener("click", () => selectSession(el.dataset.sessionId));
@@ -1563,6 +1657,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       });
       $("logout").addEventListener("click", () => {
         closeEventStream();
+        stopSessionsPoll();
         clearToken();
         showAuth();
       });
