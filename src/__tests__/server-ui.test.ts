@@ -132,4 +132,20 @@ describe("static UI mount", () => {
       expect(res.body).toContain("updateCwdHistory");
     },
   );
+
+  it.runIf(uiBuilt)(
+    "v0.20.0 sessions tab has approval badge + polling + Notification API hook",
+    async () => {
+      const res = await app.inject({ method: "GET", url: "/" });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('id="sessions-badge"');
+      expect(res.body).toContain("tab-badge");
+      expect(res.body).toContain("startSessionsPoll");
+      expect(res.body).toContain("updateApprovalBadge");
+      expect(res.body).toContain("notifyApprovalNeeded");
+      const css = readBundledCss();
+      expect(css).toMatch(/\.session-card\.needs-approval\b/);
+      expect(css).toMatch(/\.tab-badge\b/);
+    },
+  );
 });
