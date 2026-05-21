@@ -266,6 +266,120 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         font-size: 0.75rem;
         padding: 0.3rem 0.6rem;
       }
+      .log-entry.assistant {
+        background: rgba(255, 213, 74, 0.04);
+        padding: 0.5rem 0.6rem;
+      }
+      .log-entry.assistant .log-kind {
+        color: var(--accent);
+      }
+      .log-entry.thinking {
+        opacity: 0.55;
+      }
+      .log-entry.thinking .log-body {
+        font-style: italic;
+      }
+      .log-body.markdown {
+        font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+        font-size: 0.8125rem;
+        line-height: 1.5;
+        white-space: normal;
+        word-break: break-word;
+      }
+      .log-body.markdown p {
+        margin: 0.25rem 0;
+      }
+      .log-body.markdown ul {
+        margin: 0.25rem 0;
+        padding-left: 1.2rem;
+      }
+      .log-body.markdown a {
+        color: var(--accent);
+      }
+      .code-block {
+        background: #0a0a0a;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 0.5rem 0.75rem;
+        margin: 0.4rem 0;
+        overflow-x: auto;
+        font-size: 0.75rem;
+        line-height: 1.4;
+      }
+      .inline-code {
+        background: #0a0a0a;
+        border: 1px solid var(--border);
+        padding: 0 0.25rem;
+        border-radius: 3px;
+        font-size: 0.78rem;
+      }
+      .tool-call {
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: #15151a;
+        padding: 0.5rem 0.75rem;
+        margin: 0.3rem 0;
+        font-size: 0.78rem;
+      }
+      .tool-call-header {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+      }
+      .tool-name {
+        font-weight: 600;
+        color: var(--fg);
+      }
+      .tool-status {
+        font-size: 0.68rem;
+        padding: 0.1rem 0.4rem;
+        border-radius: 3px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .tool-status.pending,
+      .tool-status.in_progress {
+        background: rgba(255, 213, 74, 0.2);
+        color: var(--accent);
+      }
+      .tool-status.completed {
+        background: rgba(102, 204, 102, 0.18);
+        color: var(--success);
+      }
+      .tool-status.failed,
+      .tool-status.error {
+        background: rgba(255, 102, 102, 0.18);
+        color: var(--danger);
+      }
+      .tool-locations {
+        color: var(--fg-dim);
+        font-size: 0.72rem;
+        margin-top: 0.25rem;
+      }
+      .tool-content {
+        margin-top: 0.35rem;
+        background: #0a0a0a;
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        padding: 0.4rem 0.5rem;
+        font-size: 0.72rem;
+        max-height: 200px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .tool-content[hidden] {
+        display: none;
+      }
+      .tool-toggle {
+        background: transparent;
+        color: var(--fg-dim);
+        border: none;
+        font-size: 0.7rem;
+        cursor: pointer;
+        padding: 0 0.2rem;
+        margin-left: auto;
+      }
       .projects {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -905,13 +1019,15 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         $("session-detail").hidden = false;
         $("response-pane").className = "response-pane";
         $("response-pane").innerHTML = "";
+        resetSessionLog();
         appendLog("info", "Connecting to event stream…", null);
         openEventStream(id);
         refreshSessions();
       }
       async function sendPrompt(text) {
         if (!selectedSession) return;
-        appendLog("send", "→ " + text, null);
+        finalizeAssistantEntry();
+        appendLog("user", text, null);
         try {
           const res = await apiFetch(
             "/v1/sessions/" + encodeURIComponent(selectedSession) + "/messages",
@@ -922,6 +1038,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
             return;
           }
           const result = await res.json();
+          finalizeAssistantEntry();
           appendLog(
             "done",
             "stopReason=" + result.stopReason + " · updates=" + (result.updates?.length ?? 0),
@@ -934,6 +1051,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       async function deleteSession() {
         if (!selectedSession) return;
         closeEventStream();
+        resetSessionLog();
         await apiFetch("/v1/sessions/" + encodeURIComponent(selectedSession), {
           method: "DELETE",
         });
@@ -973,21 +1091,227 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         pane.scrollTop = pane.scrollHeight;
         return entry;
       }
-      function describeUpdate(payload) {
-        const p = payload?.params || {};
-        if (p.kind === "agent_message" || p.kind === "agent_message_chunk") {
-          const text = typeof p.content === "string" ? p.content : (p.text || "");
-          return "agent: " + text.slice(0, 140);
+      // Naive Markdown renderer. Handles ``` code fences, `inline code`,
+      // **bold**, *italic*, [text](url), and "- item" bullet lists. Anything
+      // we don't recognize stays as plain text with <br> line breaks. The
+      // text is HTML-escaped before formatting so user content can't inject
+      // tags.
+      function renderMarkdown(text) {
+        const codeBlocks = [];
+        const inlineCodes = [];
+        let html = escape(String(text));
+        html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_m, _lang, code) => {
+          codeBlocks.push(code);
+          return "CB" + (codeBlocks.length - 1) + "";
+        });
+        html = html.replace(/`([^`\n]+)`/g, (_m, code) => {
+          inlineCodes.push(code);
+          return "IC" + (inlineCodes.length - 1) + "";
+        });
+        html = html.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+        html = html.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, "$1<em>$2</em>");
+        html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+        html = html.replace(/^[-*] (.+)$/gm, "<li>$1</li>");
+        html = html.replace(/(<li>[^]*?<\/li>(?:\n<li>[^]*?<\/li>)*)/g, "<ul>$1</ul>");
+        html = html.replace(/\n/g, "<br>");
+        html = html.replace(/CB(\d+)/g, (_m, idx) =>
+          '<pre class="code-block"><code>' + codeBlocks[Number(idx)] + "</code></pre>",
+        );
+        html = html.replace(/IC(\d+)/g, (_m, idx) =>
+          '<code class="inline-code">' + inlineCodes[Number(idx)] + "</code>",
+        );
+        return html;
+      }
+
+      // Streaming state for agent_message_chunk: chunks accumulate into one
+      // log entry instead of creating N adjacent "[update]" lines.
+      let currentAssistantEntry = null;
+      let currentAssistantText = "";
+      const toolCallEntries = new Map();
+      const thinkingEntries = new Map();
+
+      function newLogShell(kind, at) {
+        const pane = $("response-pane");
+        const entry = document.createElement("div");
+        entry.className = "log-entry " + kind;
+        const t = document.createElement("span");
+        t.className = "log-time";
+        t.textContent = timeStamp(at);
+        const k = document.createElement("span");
+        k.className = "log-kind";
+        k.textContent = "[" + kind + "]";
+        entry.append(t, k);
+        pane.appendChild(entry);
+        return entry;
+      }
+      function scrollLogToBottom() {
+        const pane = $("response-pane");
+        pane.scrollTop = pane.scrollHeight;
+      }
+      function finalizeAssistantEntry() {
+        currentAssistantEntry = null;
+        currentAssistantText = "";
+      }
+      function renderAssistantChunk(text, at) {
+        if (currentAssistantEntry === null) {
+          const entry = newLogShell("assistant", at);
+          const body = document.createElement("div");
+          body.className = "log-body markdown";
+          entry.appendChild(body);
+          currentAssistantEntry = body;
+          currentAssistantText = "";
         }
-        if (p.kind === "thinking" || p.kind === "agent_thought_chunk") {
-          return "thinking";
+        currentAssistantText += text;
+        currentAssistantEntry.innerHTML = renderMarkdown(currentAssistantText);
+        scrollLogToBottom();
+      }
+      function renderThinkingChunk(text, at, key) {
+        let entry = key ? thinkingEntries.get(key) : null;
+        if (!entry) {
+          const shell = newLogShell("thinking", at);
+          const body = document.createElement("div");
+          body.className = "log-body";
+          body.dataset.text = "";
+          shell.appendChild(body);
+          entry = body;
+          if (key) thinkingEntries.set(key, entry);
         }
-        if (p.kind === "tool_call" || p.kind === "tool_call_update") {
-          const name = p.title || p.toolCallId || p.toolName || "tool";
-          return "tool: " + name + (p.status ? " · " + p.status : "");
+        const next = (entry.dataset.text ?? "") + text;
+        entry.dataset.text = next;
+        entry.textContent = next.length > 200 ? next.slice(0, 200) + "…" : next;
+        scrollLogToBottom();
+      }
+      function extractToolText(c) {
+        if (typeof c === "string") return c;
+        if (c && typeof c === "object") {
+          if (typeof c.text === "string") return c.text;
+          if (typeof c.content === "string") return c.content;
+          if (c.type === "text" && typeof c.text === "string") return c.text;
         }
-        if (p.kind === "plan") return "plan";
-        return payload?.method || JSON.stringify(payload).slice(0, 140);
+        return null;
+      }
+      function buildToolContentBlock(p) {
+        const pieces = [];
+        const input = p.rawInput ?? p.input;
+        if (input !== undefined) {
+          try {
+            pieces.push("input:\n" + JSON.stringify(input, null, 2));
+          } catch {
+            pieces.push("input: " + String(input));
+          }
+        }
+        const content = p.content ?? p.rawOutput ?? p.output;
+        if (Array.isArray(content)) {
+          for (const c of content) {
+            const t = extractToolText(c);
+            if (t !== null) pieces.push(t);
+          }
+        } else if (content !== undefined) {
+          const t = extractToolText(content);
+          if (t !== null) pieces.push(t);
+          else {
+            try {
+              pieces.push(JSON.stringify(content, null, 2));
+            } catch {
+              pieces.push(String(content));
+            }
+          }
+        }
+        return pieces.length > 0 ? pieces.join("\n") : null;
+      }
+      function renderToolCall(p, at) {
+        const id = p.toolCallId || p.id || `unkeyed-${Date.now()}-${Math.random()}`;
+        let entry = toolCallEntries.get(id);
+        if (!entry) {
+          const shell = newLogShell("tool", at);
+          const block = document.createElement("div");
+          block.className = "tool-call";
+          shell.appendChild(block);
+          entry = {
+            block,
+            header: null,
+            name: null,
+            status: null,
+            toggle: null,
+            locations: null,
+            content: null,
+            params: {},
+          };
+          const header = document.createElement("div");
+          header.className = "tool-call-header";
+          const name = document.createElement("span");
+          name.className = "tool-name";
+          const status = document.createElement("span");
+          status.className = "tool-status pending";
+          status.textContent = "pending";
+          const toggle = document.createElement("button");
+          toggle.type = "button";
+          toggle.className = "tool-toggle";
+          toggle.textContent = "show content";
+          toggle.addEventListener("click", () => {
+            if (!entry.content) return;
+            const h = entry.content.toggleAttribute("hidden");
+            toggle.textContent = h ? "show content" : "hide content";
+          });
+          header.append(name, status, toggle);
+          block.appendChild(header);
+          entry.header = header;
+          entry.name = name;
+          entry.status = status;
+          entry.toggle = toggle;
+          toolCallEntries.set(id, entry);
+        }
+        entry.params = { ...entry.params, ...p };
+        const merged = entry.params;
+        const title = merged.title || merged.toolName || merged.kind || "tool";
+        entry.name.textContent = title;
+        const st = merged.status || "pending";
+        entry.status.className = "tool-status " + st;
+        entry.status.textContent = st;
+        const locs = Array.isArray(merged.locations) ? merged.locations : [];
+        if (locs.length > 0) {
+          if (!entry.locations) {
+            entry.locations = document.createElement("div");
+            entry.locations.className = "tool-locations";
+            entry.block.appendChild(entry.locations);
+          }
+          entry.locations.textContent = locs
+            .map((l) => l.path || l).filter(Boolean).join(" · ");
+        }
+        const text = buildToolContentBlock(merged);
+        if (text !== null) {
+          if (!entry.content) {
+            entry.content = document.createElement("pre");
+            entry.content.className = "tool-content";
+            entry.content.setAttribute("hidden", "");
+            entry.block.appendChild(entry.content);
+          }
+          entry.content.textContent = text;
+        } else if (entry.toggle) {
+          entry.toggle.style.display = "none";
+        }
+        scrollLogToBottom();
+      }
+      function renderPlan(p, at) {
+        const shell = newLogShell("plan", at);
+        const body = document.createElement("div");
+        body.className = "log-body markdown";
+        const steps = Array.isArray(p.entries) ? p.entries : Array.isArray(p.steps) ? p.steps : [];
+        if (steps.length > 0) {
+          body.innerHTML =
+            "<ul>" +
+            steps
+              .map((s) => {
+                const t = typeof s === "string" ? s : s.title || s.text || s.content || "";
+                return "<li>" + escape(t) + "</li>";
+              })
+              .join("") +
+            "</ul>";
+        } else {
+          body.textContent = "(plan)";
+        }
+        shell.appendChild(body);
+        scrollLogToBottom();
       }
       function describeApproval(approval) {
         const params = approval.params || {};
@@ -1035,13 +1359,52 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         }
       }
       function handleSseEvent(event) {
-        if (event.type === "update") {
-          appendLog("update", describeUpdate(event.payload), { at: event.at });
-        } else if (event.type === "approval-request") {
+        if (event.type === "approval-request") {
+          finalizeAssistantEntry();
           renderApproval(event);
-        } else if (event.type === "session-closed") {
-          appendLog("closed", "session closed", { at: event.at });
+          return;
         }
+        if (event.type === "session-closed") {
+          finalizeAssistantEntry();
+          appendLog("closed", "session closed", { at: event.at });
+          return;
+        }
+        if (event.type !== "update") return;
+        const payload = event.payload || {};
+        const p = payload.params || {};
+        const kind = p.kind || payload.kind;
+        if (kind === "agent_message_chunk" || kind === "agent_message") {
+          const text = typeof p.content === "string"
+            ? p.content
+            : extractToolText(p.content) ?? p.text ?? "";
+          if (text) renderAssistantChunk(text, event.at);
+          return;
+        }
+        if (kind === "agent_thought_chunk" || kind === "thinking") {
+          finalizeAssistantEntry();
+          const text = typeof p.content === "string"
+            ? p.content
+            : extractToolText(p.content) ?? p.text ?? "";
+          renderThinkingChunk(text || "thinking…", event.at, p.thoughtId || "primary");
+          return;
+        }
+        if (kind === "tool_call" || kind === "tool_call_update") {
+          finalizeAssistantEntry();
+          renderToolCall(p, event.at);
+          return;
+        }
+        if (kind === "plan") {
+          finalizeAssistantEntry();
+          renderPlan(p, event.at);
+          return;
+        }
+        finalizeAssistantEntry();
+        appendLog("update", kind || payload.method || "unknown", { at: event.at });
+      }
+      function resetSessionLog() {
+        finalizeAssistantEntry();
+        toolCallEntries.clear();
+        thinkingEntries.clear();
       }
       async function openEventStream(id) {
         closeEventStream();

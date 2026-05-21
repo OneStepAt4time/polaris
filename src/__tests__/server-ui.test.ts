@@ -93,4 +93,28 @@ describe("static UI mount", () => {
       expect(css).not.toMatch(/\.kpi\[data-astro-cid-/);
     },
   );
+
+  it.runIf(uiBuilt)(
+    "v0.16.0 rich-rendering CSS classes are present (tool-call, code-block, inline-code, log-body.markdown)",
+    () => {
+      const css = readBundledCss();
+      expect(css).toMatch(/\.tool-call\s*\{/);
+      expect(css).toMatch(/\.code-block\s*\{/);
+      expect(css).toMatch(/\.inline-code\s*\{/);
+      expect(css).toMatch(/\.tool-status\.completed\b/);
+      expect(css).toMatch(/\.log-body\.markdown\s*\{/);
+    },
+  );
+
+  it.runIf(uiBuilt)(
+    "v0.16.0 inline script contains the Markdown renderer + streaming handlers",
+    async () => {
+      const res = await app.inject({ method: "GET", url: "/" });
+      expect(res.statusCode).toBe(200);
+      // These three symbols must exist for the rich renderer to function.
+      expect(res.body).toContain("renderMarkdown");
+      expect(res.body).toContain("renderAssistantChunk");
+      expect(res.body).toContain("renderToolCall");
+    },
+  );
 });
