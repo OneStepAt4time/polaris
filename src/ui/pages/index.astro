@@ -611,8 +611,11 @@ const tagline = "Self-hosted observatory for your AI coding agents";
             type="text"
             id="new-session-cwd"
             placeholder="Working directory (absolute path)"
+            list="cwd-history"
+            autocomplete="off"
             required
           />
+          <datalist id="cwd-history"></datalist>
           <button type="submit">Create</button>
         </form>
         <h2>Active sessions</h2>
@@ -620,7 +623,12 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         <div id="session-detail" hidden>
           <h2>Selected session</h2>
           <form id="prompt-form" class="prompt-form">
-            <textarea id="prompt-text" placeholder="Type a prompt..." required></textarea>
+            <textarea
+              id="prompt-text"
+              placeholder="Type a prompt — Enter to send, Shift+Enter for newline, Ctrl+L to clear log, Esc to blur"
+              required
+              rows="2"
+            ></textarea>
             <div class="row">
               <button type="submit">Send prompt</button>
               <button type="button" id="delete-session" class="danger">Delete session</button>
@@ -990,10 +998,30 @@ const tagline = "Self-hosted observatory for your AI coding agents";
           if (!res.ok) throw new Error("HTTP " + res.status);
           const { sessions } = await res.json();
           renderSessions(sessions);
+          updateCwdHistory(sessions);
         } catch (e) {
           $("sessions-list").innerHTML =
             '<div class="error">Failed to load: ' + escape(e.message) + "</div>";
         }
+      }
+      function updateCwdHistory(sessions) {
+        // v0.19.0: populate datalist with unique cwds from past + live
+        // sessions (most-recent first). Browser auto-suggests as the user
+        // types a prefix.
+        const seen = new Set();
+        const ordered = [];
+        for (const s of sessions) {
+          if (typeof s.cwd === "string" && !seen.has(s.cwd)) {
+            seen.add(s.cwd);
+            ordered.push(s.cwd);
+          }
+        }
+        const dl = $("cwd-history");
+        if (dl)
+          dl.innerHTML = ordered
+            .slice(0, 20)
+            .map((cwd) => '<option value="' + escape(cwd) + '"></option>')
+            .join("");
       }
       function settingsBadges(s) {
         const settings = s.settings;
@@ -1564,11 +1592,44 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       });
       $("prompt-form").addEventListener("submit", (ev) => {
         ev.preventDefault();
-        const text = $("prompt-text").value.trim();
-        if (!text) return;
-        $("prompt-text").value = "";
-        sendPrompt(text);
+        submitPromptFromTextarea();
       });
+      function submitPromptFromTextarea() {
+        const ta = $("prompt-text");
+        const text = ta.value.trim();
+        if (!text) return;
+        ta.value = "";
+        autoResizeTextarea(ta);
+        sendPrompt(text);
+      }
+      function autoResizeTextarea(ta) {
+        ta.style.height = "auto";
+        ta.style.height = Math.min(240, Math.max(64, ta.scrollHeight)) + "px";
+      }
+      // v0.19.0: keyboard shortcuts on the prompt textarea.
+      // Enter         -> send
+      // Shift+Enter   -> newline (default browser behavior)
+      // Ctrl+L / Cmd+L -> clear the response log
+      // Esc           -> blur (unfocus)
+      $("prompt-text").addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
+          ev.preventDefault();
+          submitPromptFromTextarea();
+          return;
+        }
+        if (ev.key === "l" && (ev.ctrlKey || ev.metaKey)) {
+          ev.preventDefault();
+          $("response-pane").innerHTML = "";
+          resetSessionLog();
+          appendLog("info", "(log cleared)", null);
+          return;
+        }
+        if (ev.key === "Escape") {
+          ev.preventDefault();
+          ev.target.blur();
+        }
+      });
+      $("prompt-text").addEventListener("input", (ev) => autoResizeTextarea(ev.target));
       $("delete-session").addEventListener("click", () => deleteSession());
 
       if (getToken()) {
