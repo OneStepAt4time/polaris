@@ -34,6 +34,8 @@ export interface SessionRecord {
   status: SessionStatus;
   updates: SessionUpdate[];
   settings?: SessionSettingsInfo;
+  /** Number of pending tool-permission requests on this session. v0.20.0. */
+  pendingApprovalsCount?: number;
 }
 
 export interface CreateSessionOptions {
@@ -473,6 +475,7 @@ function snapshot(rec: InternalSession): SessionRecord {
     lastActivityAt: rec.lastActivityAt,
     status: rec.status,
     updates: rec.updates.slice(),
+    pendingApprovalsCount: rec.approvals.size,
   };
   if (rec.settings !== undefined) out.settings = rec.settings;
   return out;

@@ -187,6 +187,26 @@ describe("createSessionManager", () => {
     expect(failures[0]?.atMs).toBeGreaterThan(0);
   });
 
+  it("session snapshot exposes pendingApprovalsCount (v0.20.0)", async () => {
+    const rec = await mgr.createSession({ cwd: "/tmp/p" });
+    expect(rec.pendingApprovalsCount).toBe(0);
+    const events: SessionEvent[] = [];
+    mgr.subscribe(rec.id, (e) => events.push(e));
+    const promptPromise = mgr.sendPrompt(rec.id, "ask-permission").catch((err: Error) => err);
+    await waitFor(() => events.find((e) => e.type === "approval-request"));
+    const snap = mgr.getSession(rec.id);
+    expect(snap?.pendingApprovalsCount).toBe(1);
+    // Cleanup: respond so the prompt resolves before afterEach closes.
+    const approvals = mgr.listApprovals(rec.id);
+    if (approvals[0]) {
+      mgr.respondToApproval(rec.id, approvals[0].approvalId, {
+        outcome: "selected",
+        optionId: "allow",
+      });
+    }
+    await promptPromise;
+  });
+
   it("createSession reads .mcp.json + CLAUDE.md from cwd and surfaces settings (v0.17.0)", async () => {
     const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
