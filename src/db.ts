@@ -21,6 +21,25 @@ export interface RateLimitSample {
   error: string | null;
 }
 
+export interface AcpSessionRow {
+  id: string;
+  cwd: string;
+  createdAt: number;
+  lastActivityAt: number;
+  status: string;
+  endedAt: number | null;
+  endReason: string | null;
+  settingsJson: string | null;
+}
+
+export interface SessionMessageRow {
+  id: number;
+  sessionId: string;
+  tsMs: number;
+  kind: string;
+  payloadJson: string;
+}
+
 export interface PolarisDb {
   insertEvent(e: EventRow): boolean;
   countEvents(): number;
@@ -29,6 +48,12 @@ export interface PolarisDb {
   markNotified(ruleName: string, dedupKey: string, sentAtMs: number): void;
   insertRateLimitSample(s: RateLimitSample): void;
   getLatestRateLimitSample(): RateLimitSample | null;
+  upsertAcpSession(row: AcpSessionRow): void;
+  closeAcpSession(id: string, endedAt: number, reason: string): void;
+  listAcpSessions(): AcpSessionRow[];
+  getAcpSession(id: string): AcpSessionRow | null;
+  appendSessionMessage(row: Omit<SessionMessageRow, "id">): void;
+  getSessionMessages(sessionId: string): SessionMessageRow[];
   close(): void;
 }
 
@@ -58,6 +83,25 @@ const MIGRATIONS: readonly string[] = [
      raw_json TEXT,
      error TEXT
    )`,
+  `CREATE TABLE IF NOT EXISTS acp_sessions (
+     id TEXT PRIMARY KEY,
+     cwd TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     last_activity_at INTEGER NOT NULL,
+     status TEXT NOT NULL,
+     ended_at INTEGER,
+     end_reason TEXT,
+     settings_json TEXT
+   )`,
+  "CREATE INDEX IF NOT EXISTS idx_acp_sessions_created ON acp_sessions(created_at DESC)",
+  `CREATE TABLE IF NOT EXISTS session_messages (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     session_id TEXT NOT NULL,
+     ts_ms INTEGER NOT NULL,
+     kind TEXT NOT NULL,
+     payload_json TEXT NOT NULL
+   )`,
+  "CREATE INDEX IF NOT EXISTS idx_session_messages_sid ON session_messages(session_id, ts_ms)",
 ];
 
 function runMigrations(db: DatabaseType): void {
@@ -112,6 +156,41 @@ export function openDb(path: string): PolarisDb {
     `SELECT ts_ms AS tsMs, http_status AS httpStatus, raw_json AS rawJson, error
      FROM rate_history ORDER BY ts_ms DESC LIMIT 1`,
   );
+  const acpUpsertStmt = db.prepare(
+    `INSERT INTO acp_sessions
+       (id, cwd, created_at, last_activity_at, status, ended_at, end_reason, settings_json)
+     VALUES (@id, @cwd, @createdAt, @lastActivityAt, @status, @endedAt, @endReason, @settingsJson)
+     ON CONFLICT(id) DO UPDATE SET
+       last_activity_at = excluded.last_activity_at,
+       status = excluded.status,
+       ended_at = COALESCE(acp_sessions.ended_at, excluded.ended_at),
+       end_reason = COALESCE(acp_sessions.end_reason, excluded.end_reason),
+       settings_json = COALESCE(excluded.settings_json, acp_sessions.settings_json)`,
+  );
+  const acpCloseStmt = db.prepare(
+    `UPDATE acp_sessions SET status = 'closed', ended_at = ?, end_reason = ?
+     WHERE id = ? AND ended_at IS NULL`,
+  );
+  const acpListStmt = db.prepare(
+    `SELECT id, cwd, created_at AS createdAt, last_activity_at AS lastActivityAt,
+            status, ended_at AS endedAt, end_reason AS endReason,
+            settings_json AS settingsJson
+     FROM acp_sessions ORDER BY created_at DESC`,
+  );
+  const acpGetStmt = db.prepare(
+    `SELECT id, cwd, created_at AS createdAt, last_activity_at AS lastActivityAt,
+            status, ended_at AS endedAt, end_reason AS endReason,
+            settings_json AS settingsJson
+     FROM acp_sessions WHERE id = ?`,
+  );
+  const messageInsertStmt = db.prepare(
+    `INSERT INTO session_messages (session_id, ts_ms, kind, payload_json)
+     VALUES (@sessionId, @tsMs, @kind, @payloadJson)`,
+  );
+  const messageListStmt = db.prepare(
+    `SELECT id, session_id AS sessionId, ts_ms AS tsMs, kind, payload_json AS payloadJson
+     FROM session_messages WHERE session_id = ? ORDER BY id ASC`,
+  );
 
   return {
     insertEvent: (e: EventRow): boolean => {
@@ -137,6 +216,25 @@ export function openDb(path: string): PolarisDb {
     getLatestRateLimitSample: (): RateLimitSample | null => {
       const row = rateLatestStmt.get() as RateLimitSample | undefined;
       return row ?? null;
+    },
+    upsertAcpSession: (row: AcpSessionRow): void => {
+      acpUpsertStmt.run(row);
+    },
+    closeAcpSession: (id: string, endedAt: number, reason: string): void => {
+      acpCloseStmt.run(endedAt, reason, id);
+    },
+    listAcpSessions: (): AcpSessionRow[] => {
+      return acpListStmt.all() as AcpSessionRow[];
+    },
+    getAcpSession: (id: string): AcpSessionRow | null => {
+      const row = acpGetStmt.get(id) as AcpSessionRow | undefined;
+      return row ?? null;
+    },
+    appendSessionMessage: (row: Omit<SessionMessageRow, "id">): void => {
+      messageInsertStmt.run(row);
+    },
+    getSessionMessages: (sessionId: string): SessionMessageRow[] => {
+      return messageListStmt.all(sessionId) as SessionMessageRow[];
     },
     close: (): void => {
       db.close();

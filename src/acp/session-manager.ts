@@ -102,11 +102,44 @@ export interface SessionManager {
 
 export const MAX_FAILURE_BUFFER = 100;
 
+/**
+ * Subset of the PolarisDb surface that the SessionManager uses for v0.18.0
+ * persistence. Kept as a structural type so tests can inject an in-memory
+ * stub without dragging in the full db.ts dependency.
+ */
+export interface SessionStore {
+  upsertAcpSession(row: {
+    id: string;
+    cwd: string;
+    createdAt: number;
+    lastActivityAt: number;
+    status: string;
+    endedAt: number | null;
+    endReason: string | null;
+    settingsJson: string | null;
+  }): void;
+  closeAcpSession(id: string, endedAt: number, reason: string): void;
+  appendSessionMessage(row: {
+    sessionId: string;
+    tsMs: number;
+    kind: string;
+    payloadJson: string;
+  }): void;
+}
+
 export interface SessionManagerOptions {
   binCmd?: string;
   protocolVersion?: number;
   /** Auto-deny pending approvals not answered within this window. Default 5 min. */
   approvalTimeoutMs?: number;
+  /**
+   * Optional persistence store. When supplied, the SessionManager writes
+   * session lifecycle + every update event into the store. Sessions remain
+   * fully functional without a store — v0.18.0 surface is read-only history,
+   * resume is not implemented. ADR-0005: opt-in, no abstraction over a
+   * single concrete impl yet.
+   */
+  store?: SessionStore;
 }
 
 const DEFAULT_PROMPT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -140,10 +173,12 @@ class SessionManagerImpl implements SessionManager {
   private readonly sessions = new Map<string, InternalSession>();
   private readonly approvalTimeoutMs: number;
   private readonly failures: SessionFailure[] = [];
+  private readonly store: SessionStore | null;
   private closedFlag = false;
 
   constructor(options: SessionManagerOptions = {}) {
     this.approvalTimeoutMs = options.approvalTimeoutMs ?? DEFAULT_APPROVAL_TIMEOUT_MS;
+    this.store = options.store ?? null;
     this.handle = spawnAcpProcess(options.binCmd === undefined ? {} : { binCmd: options.binCmd });
     this.client = createAcpJsonRpcClient(this.handle.stdin, this.handle.stdout);
     this.client.on("notification", (msg: IncomingNotification) => this.onNotification(msg));
@@ -155,6 +190,47 @@ class SessionManagerImpl implements SessionManager {
       })
       .then(() => undefined);
     this.initialized.catch(() => {});
+  }
+
+  private persistSession(rec: InternalSession): void {
+    if (this.store === null) return;
+    try {
+      this.store.upsertAcpSession({
+        id: rec.id,
+        cwd: rec.cwd,
+        createdAt: rec.createdAt,
+        lastActivityAt: rec.lastActivityAt,
+        status: rec.status,
+        endedAt: null,
+        endReason: null,
+        settingsJson: rec.settings !== undefined ? JSON.stringify(rec.settings) : null,
+      });
+    } catch {
+      // Persistence is best-effort. Never let DB errors break ACP flow.
+    }
+  }
+
+  private persistMessage(sessionId: string, tsMs: number, kind: string, payload: unknown): void {
+    if (this.store === null) return;
+    try {
+      this.store.appendSessionMessage({
+        sessionId,
+        tsMs,
+        kind,
+        payloadJson: JSON.stringify(payload),
+      });
+    } catch {
+      // Best-effort.
+    }
+  }
+
+  private persistClose(id: string, reason: string): void {
+    if (this.store === null) return;
+    try {
+      this.store.closeAcpSession(id, Date.now(), reason);
+    } catch {
+      // Best-effort.
+    }
   }
 
   async createSession(opts: CreateSessionOptions): Promise<SessionRecord> {
@@ -192,6 +268,7 @@ class SessionManagerImpl implements SessionManager {
       settings: settingsToInfo(projectSettings),
     };
     this.sessions.set(rec.id, rec);
+    this.persistSession(rec);
     return snapshot(rec);
   }
 
@@ -277,6 +354,7 @@ class SessionManagerImpl implements SessionManager {
     this.emit(rec, { type: "session-closed", at: Date.now() });
     rec.listeners.clear();
     this.sessions.delete(id);
+    this.persistClose(id, "deleted");
   }
 
   async close(): Promise<void> {
@@ -288,6 +366,7 @@ class SessionManagerImpl implements SessionManager {
       rec.status = "closed";
       this.emit(rec, { type: "session-closed", at: Date.now() });
       rec.listeners.clear();
+      this.persistClose(rec.id, "manager-close");
     }
     this.sessions.clear();
     this.client.close();
@@ -333,6 +412,10 @@ class SessionManagerImpl implements SessionManager {
     rec.updates.push({ at: now, payload: msg });
     rec.lastActivityAt = now;
     this.emit(rec, { type: "update", at: now, payload: msg });
+    const params = msg.params as { kind?: unknown } | undefined;
+    const kind = typeof params?.kind === "string" ? params.kind : "update";
+    this.persistMessage(sid, now, kind, msg);
+    this.persistSession(rec);
   }
 
   private onServerRequest(msg: IncomingRequest): void {
