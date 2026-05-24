@@ -20,11 +20,13 @@ const ConfigSchema = z.object({
   //       Tests point this at a fixture script so the gate doesn't need a real
   //       `claude` install. ADR-0010 v0.3 ACP-A.
   acpBin: z.string().default(""),
-  // why: Telegram bot HTTP API token for the cost-threshold notification
-  //       channel. Empty = channel disabled (no notifications fire). v0.7.0.
-  telegramBotToken: z.string().default(""),
-  // why: Telegram chat or channel ID to deliver alerts to. Empty = disabled.
-  telegramChatId: z.string().default(""),
+  // why: Telegram bot config in a single env var: "<bot_token>|<chat_id>".
+  //       Pipe-separated because Telegram tokens contain ":" themselves
+  //       (e.g. "123456789:ABC-DEF..."). Empty = channel disabled. v0.21.0
+  //       consolidation of the former POLARIS_TELEGRAM_BOT_TOKEN +
+  //       POLARIS_TELEGRAM_CHAT_ID pair to free a slot under the 12-env
+  //       ceiling for the new POLARIS_WEBHOOK_URL.
+  telegram: z.string().default(""),
   // why: daily USD ceiling — when today's aggregated cost crosses it,
   //       Polaris fires one Telegram alert (deduped per UTC day via the
   //       notifications_sent table). 0 = disabled. v0.7.0.
@@ -42,9 +44,34 @@ const ConfigSchema = z.object({
   //       a rule is marked sent as soon as at least one channel delivers.
   //       Empty = disabled. v0.12.0.
   discordWebhookUrl: z.string().default(""),
+  // why: generic webhook URL. POST {rule, dedupKey, message, source}
+  //       payload to your own endpoint. v0.21.0 closes the CHARTER §3
+  //       channels quartet (Telegram + Slack + Discord + Webhook).
+  webhookUrl: z.string().default(""),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+
+export interface TelegramSplit {
+  botToken: string;
+  chatId: string;
+}
+
+/**
+ * Split POLARIS_TELEGRAM="<bot_token>|<chat_id>" into its two parts.
+ * Returns null when the input is empty or malformed, so callers treat the
+ * channel as disabled. The bot token itself may contain ":" (e.g.
+ * "123456789:ABC-DEF...") which is why we use "|" as the separator.
+ */
+export function parseTelegramEnv(raw: string): TelegramSplit | null {
+  if (raw === "") return null;
+  const idx = raw.lastIndexOf("|");
+  if (idx <= 0 || idx === raw.length - 1) return null;
+  const botToken = raw.slice(0, idx).trim();
+  const chatId = raw.slice(idx + 1).trim();
+  if (botToken === "" || chatId === "") return null;
+  return { botToken, chatId };
+}
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = ConfigSchema.safeParse({
@@ -54,12 +81,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dbPath: env.POLARIS_DB_PATH,
     watchDir: env.POLARIS_WATCH_DIR,
     acpBin: env.POLARIS_ACP_BIN,
-    telegramBotToken: env.POLARIS_TELEGRAM_BOT_TOKEN,
-    telegramChatId: env.POLARIS_TELEGRAM_CHAT_ID,
+    telegram: env.POLARIS_TELEGRAM,
     dailyCostThresholdUsd: env.POLARIS_DAILY_COST_THRESHOLD_USD,
     rateLimitNearThresholdPct: env.POLARIS_RATE_LIMIT_NEAR_THRESHOLD_PCT,
     slackWebhookUrl: env.POLARIS_SLACK_WEBHOOK_URL,
     discordWebhookUrl: env.POLARIS_DISCORD_WEBHOOK_URL,
+    webhookUrl: env.POLARIS_WEBHOOK_URL,
   });
   if (!parsed.success) {
     const issues = parsed.error.issues
