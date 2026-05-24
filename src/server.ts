@@ -172,7 +172,7 @@ export async function buildServer(): Promise<BuildResult> {
   app.get("/health", () => ({
     status: "ok",
     service: "polaris",
-    version: "0.21.0",
+    version: "0.22.0",
   }));
 
   app.post("/v1/ingest", { config: { requireAuth: true } }, async (request, reply) => {
@@ -358,6 +358,29 @@ export async function buildServer(): Promise<BuildResult> {
         endReason: row.endReason,
         messages,
       });
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/v1/sessions/:id/resume",
+    { config: { requireAuth: true } },
+    async (request, reply) => {
+      const id = request.params.id;
+      const row = db.getAcpSession(id);
+      if (row === null) return reply.code(404).send({ error: "Session not found" });
+      try {
+        const rec = await getSessionManager().loadSession(id, { cwd: row.cwd });
+        return reply.send(rec);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        // claude-agent-acp returns -32601 / -32602 when session/load is
+        // unsupported or the session isn't recoverable. Surface as 422 so
+        // the UI can distinguish from a 5xx transport failure.
+        return reply.code(422).send({
+          error: "Session could not be resumed",
+          detail: message,
+        });
+      }
     },
   );
 
