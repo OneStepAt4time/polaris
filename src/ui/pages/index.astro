@@ -258,6 +258,16 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         margin-top: 0.35rem;
         word-break: break-all;
       }
+      .session-settings.warning {
+        color: #ffaa00;
+      }
+      .session-settings code {
+        background: rgba(255, 255, 255, 0.06);
+        padding: 0 0.25rem;
+        border-radius: 2px;
+        font-size: 0.68rem;
+        color: var(--fg);
+      }
       .new-session {
         display: flex;
         gap: 0.5rem;
@@ -1196,24 +1206,55 @@ const tagline = "Self-hosted observatory for your AI coding agents";
             .map((cwd) => '<option value="' + escape(cwd) + '"></option>')
             .join("");
       }
+      function summariseList(arr, max = 3) {
+        if (!Array.isArray(arr) || arr.length === 0) return "";
+        const shown = arr.slice(0, max).map(escape).join(", ");
+        return arr.length > max ? shown + ", …" : shown;
+      }
       function settingsBadges(s) {
-        const settings = s.settings;
-        if (!settings) return "";
-        const parts = [];
-        if (settings.claudeMdDetected) parts.push("CLAUDE.md");
-        if (settings.claudeSettingsDetected) parts.push(".claude/settings.json");
-        if (Array.isArray(settings.mcpServers) && settings.mcpServers.length > 0) {
-          parts.push(
-            ".mcp.json (" +
-              settings.mcpServers.length +
-              ": " +
-              settings.mcpServers.slice(0, 3).map(escape).join(", ") +
-              (settings.mcpServers.length > 3 ? ", …" : "") +
-              ")",
+        const cfg = s.settings;
+        if (!cfg) return "";
+        // Line 1: detected files (memory + settings).
+        const files = [];
+        if (cfg.claudeMdDetected) files.push("CLAUDE.md");
+        if (cfg.agentsMdDetected) files.push("AGENTS.md");
+        if (cfg.claudeSettingsDetected) files.push("settings.json");
+        if (cfg.claudeSettingsLocalDetected) files.push("settings.local.json");
+        if (Array.isArray(cfg.mcpServers) && cfg.mcpServers.length > 0) {
+          files.push(`.mcp.json (${cfg.mcpServers.length}: ${summariseList(cfg.mcpServers)})`);
+        }
+        // Line 2: wired-up Claude Code extensions.
+        const ext = [];
+        if (cfg.commands?.length) ext.push(`${cfg.commands.length} commands`);
+        if (cfg.agents?.length) ext.push(`${cfg.agents.length} agents`);
+        if (cfg.skills?.length) ext.push(`${cfg.skills.length} skills`);
+        if (cfg.outputStyles?.length) ext.push(`${cfg.outputStyles.length} output-styles`);
+        // Line 3: resolved settings summary (model + permissions).
+        const resolved = cfg.resolvedSettings;
+        const settingsLine = [];
+        if (resolved?.model) settingsLine.push(`model: <code>${escape(resolved.model)}</code>`);
+        if (resolved?.outputStyle) settingsLine.push(`style: ${escape(resolved.outputStyle)}`);
+        if (resolved && (resolved.permissionsAllow > 0 || resolved.permissionsDeny > 0)) {
+          settingsLine.push(
+            `permissions: ${resolved.permissionsAllow} allow · ${resolved.permissionsDeny} deny`,
           );
         }
-        if (parts.length === 0) return "";
-        return '<div class="session-settings">loaded: ' + parts.join(" · ") + "</div>";
+        if (resolved?.hookEvents?.length) {
+          settingsLine.push(`hooks: ${summariseList(resolved.hookEvents)}`);
+        }
+        if (resolved?.apiKeyHelperSet) settingsLine.push("apiKeyHelper");
+        if (resolved?.envSet) settingsLine.push("env override");
+        const lines = [];
+        if (files.length) lines.push(`<div class="session-settings">loaded: ${files.join(" · ")}</div>`);
+        if (ext.length) lines.push(`<div class="session-settings">${ext.join(" · ")}</div>`);
+        if (settingsLine.length)
+          lines.push(`<div class="session-settings">${settingsLine.join(" · ")}</div>`);
+        if (Array.isArray(cfg.warnings) && cfg.warnings.length > 0) {
+          lines.push(
+            `<div class="session-settings warning">⚠ ${cfg.warnings.length} parse warning${cfg.warnings.length > 1 ? "s" : ""}</div>`,
+          );
+        }
+        return lines.join("");
       }
       function renderSessions(sessions) {
         if (!sessions.length) {
