@@ -95,4 +95,31 @@ describe("GET /v1/metrics", () => {
     expect(body).toHaveProperty("totals");
     expect(body).toHaveProperty("perModel");
   });
+
+  it("v0.25.0: includes a 'previous' block for finite ranges", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/v1/metrics?range=today",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      previous?: { fromMs: number; toMs: number; totals: { events: number } };
+    };
+    expect(body.previous).toBeDefined();
+    expect(body.previous?.fromMs).toBeGreaterThan(0);
+    expect(body.previous?.toMs).toBeGreaterThan(body.previous?.fromMs ?? 0);
+    expect(body.previous?.totals).toHaveProperty("events");
+  });
+
+  it("v0.25.0: omits 'previous' for range=all (no predecessor)", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/v1/metrics?range=all",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { previous?: unknown };
+    expect(body.previous).toBeUndefined();
+  });
 });
