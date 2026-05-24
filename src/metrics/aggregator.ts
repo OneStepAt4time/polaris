@@ -9,6 +9,10 @@ export interface PerModelMetrics {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   costUsd: number;
+  /** Lines added by tool calls aggregated to this model. v0.23.0. */
+  linesAdded: number;
+  /** Lines removed by tool calls aggregated to this model. v0.23.0. */
+  linesRemoved: number;
 }
 
 export interface MetricsTotals {
@@ -18,6 +22,10 @@ export interface MetricsTotals {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   costUsd: number;
+  /** Lines added by tool calls in this window. v0.23.0. */
+  linesAdded: number;
+  /** Lines removed by tool calls in this window. v0.23.0. */
+  linesRemoved: number;
 }
 
 export interface MetricsResult {
@@ -72,12 +80,16 @@ export function aggregate(
     cacheReadTokens: 0,
     cacheCreationTokens: 0,
     costUsd: 0,
+    linesAdded: 0,
+    linesRemoved: 0,
   };
 
   const byModel = new Map<string, PerModelMetrics>();
 
   for (const event of events) {
     const cost = computeCost(event, pricing);
+    const linesAdded = event.linesAdded ?? 0;
+    const linesRemoved = event.linesRemoved ?? 0;
 
     totals.events += 1;
     totals.inputTokens += event.inputTokens;
@@ -85,6 +97,8 @@ export function aggregate(
     totals.cacheReadTokens += event.cacheReadTokens;
     totals.cacheCreationTokens += event.cacheCreationTokens;
     totals.costUsd += cost;
+    totals.linesAdded += linesAdded;
+    totals.linesRemoved += linesRemoved;
 
     let perModel = byModel.get(event.model);
     if (perModel === undefined) {
@@ -96,6 +110,8 @@ export function aggregate(
         cacheReadTokens: 0,
         cacheCreationTokens: 0,
         costUsd: 0,
+        linesAdded: 0,
+        linesRemoved: 0,
       };
       byModel.set(event.model, perModel);
     }
@@ -105,6 +121,8 @@ export function aggregate(
     perModel.cacheReadTokens += event.cacheReadTokens;
     perModel.cacheCreationTokens += event.cacheCreationTokens;
     perModel.costUsd += cost;
+    perModel.linesAdded += linesAdded;
+    perModel.linesRemoved += linesRemoved;
   }
 
   return {

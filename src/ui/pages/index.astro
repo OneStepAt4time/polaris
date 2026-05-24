@@ -739,6 +739,12 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         if (!res.ok) throw new Error("HTTP " + res.status);
         return res.json();
       }
+      function efficiency(outputTokens, linesAdded) {
+        if (!linesAdded || linesAdded <= 0) return "—";
+        const ratio = outputTokens / linesAdded;
+        if (ratio >= 1000) return (ratio / 1000).toFixed(1) + "K";
+        return ratio.toFixed(0);
+      }
       function renderMetrics(data) {
         const kpis = [
           { label: "Total cost", value: formatUsd(data.totals.costUsd) },
@@ -746,6 +752,12 @@ const tagline = "Self-hosted observatory for your AI coding agents";
           { label: "Input tokens", value: formatTokens(data.totals.inputTokens) },
           { label: "Output tokens", value: formatTokens(data.totals.outputTokens) },
           { label: "Cache reads", value: formatTokens(data.totals.cacheReadTokens) },
+          { label: "Lines added", value: formatTokens(data.totals.linesAdded ?? 0) },
+          { label: "Lines removed", value: formatTokens(data.totals.linesRemoved ?? 0) },
+          {
+            label: "Tokens / line",
+            value: efficiency(data.totals.outputTokens, data.totals.linesAdded ?? 0),
+          },
         ];
         $("kpis").innerHTML = kpis
           .map(

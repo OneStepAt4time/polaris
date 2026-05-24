@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { parseJsonl } from "../ingest/jsonl-parser.js";
+import { extractToolLineCounts, parseJsonl } from "../ingest/jsonl-parser.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (name: string): string =>
@@ -62,5 +62,78 @@ describe("parseJsonl", () => {
     for (const event of result.events) {
       expect(event.sessionFile).toBe("my-session-file");
     }
+  });
+
+  it("v0.23.0: events default linesAdded/linesRemoved to 0 when no tool_use blocks", () => {
+    const result = parseJsonl(fixture("single-session.jsonl"), "no-tools");
+    for (const event of result.events) {
+      expect(event.linesAdded).toBe(0);
+      expect(event.linesRemoved).toBe(0);
+    }
+  });
+});
+
+describe("extractToolLineCounts", () => {
+  it("returns 0/0 for non-array content", () => {
+    expect(extractToolLineCounts(null)).toEqual({ added: 0, removed: 0 });
+    expect(extractToolLineCounts(undefined)).toEqual({ added: 0, removed: 0 });
+    expect(extractToolLineCounts("not array")).toEqual({ added: 0, removed: 0 });
+  });
+
+  it("counts Edit old_string -> removed, new_string -> added", () => {
+    const c = extractToolLineCounts([
+      {
+        type: "tool_use",
+        name: "Edit",
+        input: { old_string: "a\nb\nc", new_string: "x\ny" },
+      },
+    ]);
+    expect(c).toEqual({ added: 2, removed: 3 });
+  });
+
+  it("counts Write content -> added (no removal)", () => {
+    const c = extractToolLineCounts([
+      { type: "tool_use", name: "Write", input: { content: "line1\nline2\nline3\n" } },
+    ]);
+    expect(c).toEqual({ added: 3, removed: 0 });
+  });
+
+  it("sums all MultiEdit operations", () => {
+    const c = extractToolLineCounts([
+      {
+        type: "tool_use",
+        name: "MultiEdit",
+        input: {
+          edits: [
+            { old_string: "one\ntwo", new_string: "one-prime" },
+            { old_string: "x", new_string: "x\ny\nz" },
+          ],
+        },
+      },
+    ]);
+    expect(c).toEqual({ added: 4, removed: 3 });
+  });
+
+  it("treats NotebookEdit.new_source as added", () => {
+    const c = extractToolLineCounts([
+      { type: "tool_use", name: "NotebookEdit", input: { new_source: "cell\nrow" } },
+    ]);
+    expect(c).toEqual({ added: 2, removed: 0 });
+  });
+
+  it("ignores non-tool_use blocks and unknown tool names", () => {
+    const c = extractToolLineCounts([
+      { type: "text", text: "ignore me" },
+      { type: "tool_use", name: "Read", input: { file_path: "x" } },
+      { type: "tool_use", name: "Bash", input: { command: "ls" } },
+    ]);
+    expect(c).toEqual({ added: 0, removed: 0 });
+  });
+
+  it("does not count a trailing newline as an extra line", () => {
+    const c = extractToolLineCounts([
+      { type: "tool_use", name: "Write", input: { content: "single line\n" } },
+    ]);
+    expect(c).toEqual({ added: 1, removed: 0 });
   });
 });
