@@ -19,10 +19,40 @@ export interface SessionUpdate {
  * session record so the UI can show "loaded from .mcp.json (2 servers) +
  * CLAUDE.md detected" instead of treating every session as a blank slate.
  */
+/**
+ * Resolved settings.json + settings.local.json summary. Structural counts
+ * + the resolved model — no secret values (apiKeyHelper output, env values)
+ * are surfaced through this. v0.26.0.
+ */
+export interface SessionSettingsSummary {
+  model: string | null;
+  outputStyle: string | null;
+  permissionsAllow: number;
+  permissionsDeny: number;
+  hookEvents: string[];
+  additionalDirectories: number;
+  apiKeyHelperSet: boolean;
+  envSet: boolean;
+}
+
 export interface SessionSettingsInfo {
   claudeMdDetected: boolean;
+  /** v0.26.0: AGENTS.md alternative-memory file. */
+  agentsMdDetected: boolean;
   claudeSettingsDetected: boolean;
+  /** v0.26.0: .claude/settings.local.json (gitignored overrides). */
+  claudeSettingsLocalDetected: boolean;
   mcpServers: string[];
+  /** v0.26.0: slash command names from .claude/commands/. */
+  commands: string[];
+  /** v0.26.0: subagent names from .claude/agents/. */
+  agents: string[];
+  /** v0.26.0: skill names from .claude/skills/. */
+  skills: string[];
+  /** v0.26.0: output-style names from .claude/output-styles/. */
+  outputStyles: string[];
+  /** v0.26.0: structural summary of resolved settings (no secret values). */
+  resolvedSettings: SessionSettingsSummary | null;
   warnings: string[];
 }
 
@@ -46,8 +76,15 @@ export interface CreateSessionOptions {
 function settingsToInfo(s: ProjectSettings): SessionSettingsInfo {
   return {
     claudeMdDetected: s.claudeMdPath !== null,
+    agentsMdDetected: s.agentsMdPath !== null,
     claudeSettingsDetected: s.claudeSettingsPath !== null,
+    claudeSettingsLocalDetected: s.claudeSettingsLocalPath !== null,
     mcpServers: s.mcpServers.map((m) => m.name),
+    commands: s.commands,
+    agents: s.agents,
+    skills: s.skills,
+    outputStyles: s.outputStyles,
+    resolvedSettings: s.settings,
     warnings: s.warnings,
   };
 }
