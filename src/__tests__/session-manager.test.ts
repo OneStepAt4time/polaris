@@ -254,4 +254,38 @@ describe("createSessionManager", () => {
       /Unknown session/,
     );
   });
+
+  // v0.26.1: when .mcp.json points at a server claude-agent-acp can't start
+  // (e.g. uvx not installed), session/new fails with -32602 and Polaris used
+  // to bubble that up as an opaque 503. The fallback path retries once with
+  // empty mcpServers and surfaces the rejection as a warning.
+  it("createSession falls back to empty mcpServers when ACP rejects auto-loaded .mcp.json (v0.26.1)", async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const fixtureDir = mkdtempSync(resolve(tmpdir(), "polaris-mcpfb-"));
+    try {
+      writeFileSync(
+        resolve(fixtureDir, ".mcp.json"),
+        JSON.stringify({
+          mcpServers: { "rejects-mcp": { command: "does-not-exist" } },
+        }),
+      );
+      const rec = await mgr.createSession({ cwd: fixtureDir });
+      expect(rec.id).toMatch(/^fixture-session-\d+$/);
+      expect(rec.settings?.mcpServers).toEqual(["rejects-mcp"]);
+      expect(rec.settings?.warnings.length).toBeGreaterThan(0);
+      expect(rec.settings?.warnings[0]).toMatch(/rejected by ACP child/);
+    } finally {
+      rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
+
+  it("createSession does NOT fall back when caller passed mcpServers explicitly (v0.26.1)", async () => {
+    await expect(
+      mgr.createSession({
+        cwd: "/tmp/explicit",
+        mcpServers: [{ name: "rejects-mcp", command: "x" }],
+      }),
+    ).rejects.toThrow(/Invalid params/);
+  });
 });

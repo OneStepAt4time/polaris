@@ -292,6 +292,34 @@ class SessionManagerImpl implements SessionManager {
     }
   }
 
+  // v0.26.1: when the ACP child rejects session/new (or session/load) with
+  // -32602 Invalid params AND we auto-loaded the mcpServers list from
+  // .mcp.json, retry once with an empty mcpServers list and surface a
+  // warning. Without this, a stale .mcp.json that references a tool not
+  // installed on this machine (e.g. `uvx`) makes every session creation
+  // fail with an opaque 503.
+  private async _requestWithMcpFallback(
+    method: "session/new" | "session/load",
+    params: Record<string, unknown>,
+    autoLoaded: boolean,
+    warnings: string[],
+  ): Promise<unknown> {
+    try {
+      return await this.client.request<unknown>(method, params);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const servers = params.mcpServers;
+      const hasMcp = Array.isArray(servers) && servers.length > 0;
+      if (autoLoaded && hasMcp && /JSON-RPC error -32602\b/.test(msg)) {
+        warnings.push(
+          `MCP servers from .mcp.json rejected by ACP child (${msg}) — session created without them`,
+        );
+        return await this.client.request<unknown>(method, { ...params, mcpServers: [] });
+      }
+      throw e;
+    }
+  }
+
   async createSession(opts: CreateSessionOptions): Promise<SessionRecord> {
     if (this.closedFlag) throw new Error("SessionManager is closed");
     await this.initialized;
@@ -300,20 +328,21 @@ class SessionManagerImpl implements SessionManager {
     // convention). Also detect CLAUDE.md and .claude/settings.json for UI
     // visibility — claude-agent-acp itself reads those files based on cwd.
     const projectSettings = readProjectSettings(opts.cwd);
-    const mcpFromOpts = Array.isArray(opts.mcpServers) ? opts.mcpServers : null;
-    const mcpServers =
-      mcpFromOpts !== null
-        ? mcpFromOpts
-        : projectSettings.mcpServers.map((m) => {
-            const out: Record<string, unknown> = { name: m.name, command: m.command };
-            if (m.args !== undefined) out.args = m.args;
-            if (m.env !== undefined) out.env = m.env;
-            return out;
-          });
-    const res = await this.client.request<{ sessionId: string }>("session/new", {
-      cwd: opts.cwd,
-      mcpServers,
-    });
+    const autoLoaded = !Array.isArray(opts.mcpServers);
+    const mcpServers = autoLoaded
+      ? projectSettings.mcpServers.map((m) => {
+          const out: Record<string, unknown> = { name: m.name, command: m.command };
+          if (m.args !== undefined) out.args = m.args;
+          if (m.env !== undefined) out.env = m.env;
+          return out;
+        })
+      : (opts.mcpServers as unknown[]);
+    const res = (await this._requestWithMcpFallback(
+      "session/new",
+      { cwd: opts.cwd, mcpServers },
+      autoLoaded,
+      projectSettings.warnings,
+    )) as { sessionId: string };
     const now = Date.now();
     const rec: InternalSession = {
       id: res.sessionId,
@@ -341,23 +370,23 @@ class SessionManagerImpl implements SessionManager {
     // reported, in case the on-disk config has changed since the session was
     // originally created.
     const projectSettings = readProjectSettings(opts.cwd);
-    const mcpFromOpts = Array.isArray(opts.mcpServers) ? opts.mcpServers : null;
-    const mcpServers =
-      mcpFromOpts !== null
-        ? mcpFromOpts
-        : projectSettings.mcpServers.map((m) => {
-            const out: Record<string, unknown> = { name: m.name, command: m.command };
-            if (m.args !== undefined) out.args = m.args;
-            if (m.env !== undefined) out.env = m.env;
-            return out;
-          });
+    const autoLoaded = !Array.isArray(opts.mcpServers);
+    const mcpServers = autoLoaded
+      ? projectSettings.mcpServers.map((m) => {
+          const out: Record<string, unknown> = { name: m.name, command: m.command };
+          if (m.args !== undefined) out.args = m.args;
+          if (m.env !== undefined) out.env = m.env;
+          return out;
+        })
+      : (opts.mcpServers as unknown[]);
     // `session/load` may either return { sessionId } or just respond with no
     // body — both shapes are valid ACP. We keep the requested id either way.
-    await this.client.request<unknown>("session/load", {
-      sessionId: id,
-      cwd: opts.cwd,
-      mcpServers,
-    });
+    await this._requestWithMcpFallback(
+      "session/load",
+      { sessionId: id, cwd: opts.cwd, mcpServers },
+      autoLoaded,
+      projectSettings.warnings,
+    );
     const now = Date.now();
     const rec: InternalSession = {
       id,
