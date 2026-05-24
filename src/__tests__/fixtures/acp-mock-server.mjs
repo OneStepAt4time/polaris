@@ -83,6 +83,19 @@ function handle(msg) {
         reply(msg.id, { sessionId });
         return;
       }
+      case "session/load": {
+        // v0.22.0 resume — the fixture pretends every requested session can be
+        // rehydrated unless the id contains "no-such" (used by tests to
+        // exercise the failure branch).
+        const sid = msg.params?.sessionId ?? "";
+        if (sid.includes("no-such")) {
+          replyError(msg.id, -32602, `Unknown session: ${sid}`);
+          return;
+        }
+        sessions.set(sid, { cwd: msg.params?.cwd ?? "" });
+        reply(msg.id, {});
+        return;
+      }
       case "session/prompt": {
         const sid = msg.params?.sessionId;
         if (!sessions.has(sid)) {

@@ -82,8 +82,28 @@ export interface SessionFailure {
   atMs: number;
 }
 
+export interface ResumeOptions {
+  /**
+   * Working directory used when the session was originally created. Required
+   * because claude-agent-acp's `session/load` resolves transcripts relative
+   * to the cwd-encoded directory under `~/.claude/projects/`.
+   */
+  cwd: string;
+  /**
+   * Override the mcpServers list. Defaults to whatever `.mcp.json` in the
+   * cwd resolves to (same logic as createSession).
+   */
+  mcpServers?: unknown[];
+}
+
 export interface SessionManager {
   createSession(opts: CreateSessionOptions): Promise<SessionRecord>;
+  /**
+   * Resume a previously-closed session via ACP `session/load`. Returns the
+   * fresh SessionRecord. Throws if the agent rejects the load (e.g. no
+   * transcript on disk, or the agent doesn't support session/load). v0.22.0.
+   */
+  loadSession(id: string, opts: ResumeOptions): Promise<SessionRecord>;
   getSession(id: string): SessionRecord | undefined;
   listSessions(): SessionRecord[];
   sendPrompt(id: string, text: string, timeoutMs?: number): Promise<PromptResult>;
@@ -260,6 +280,50 @@ class SessionManagerImpl implements SessionManager {
     const now = Date.now();
     const rec: InternalSession = {
       id: res.sessionId,
+      cwd: opts.cwd,
+      createdAt: now,
+      lastActivityAt: now,
+      status: "idle",
+      updates: [],
+      approvals: new Map(),
+      listeners: new Set(),
+      settings: settingsToInfo(projectSettings),
+    };
+    this.sessions.set(rec.id, rec);
+    this.persistSession(rec);
+    return snapshot(rec);
+  }
+
+  async loadSession(id: string, opts: ResumeOptions): Promise<SessionRecord> {
+    if (this.closedFlag) throw new Error("SessionManager is closed");
+    await this.initialized;
+    const existing = this.sessions.get(id);
+    if (existing !== undefined) return snapshot(existing);
+    // Same project-settings logic as createSession — when resuming a session
+    // we still want the same MCP servers + CLAUDE.md / .claude detection
+    // reported, in case the on-disk config has changed since the session was
+    // originally created.
+    const projectSettings = readProjectSettings(opts.cwd);
+    const mcpFromOpts = Array.isArray(opts.mcpServers) ? opts.mcpServers : null;
+    const mcpServers =
+      mcpFromOpts !== null
+        ? mcpFromOpts
+        : projectSettings.mcpServers.map((m) => {
+            const out: Record<string, unknown> = { name: m.name, command: m.command };
+            if (m.args !== undefined) out.args = m.args;
+            if (m.env !== undefined) out.env = m.env;
+            return out;
+          });
+    // `session/load` may either return { sessionId } or just respond with no
+    // body — both shapes are valid ACP. We keep the requested id either way.
+    await this.client.request<unknown>("session/load", {
+      sessionId: id,
+      cwd: opts.cwd,
+      mcpServers,
+    });
+    const now = Date.now();
+    const rec: InternalSession = {
+      id,
       cwd: opts.cwd,
       createdAt: now,
       lastActivityAt: now,
