@@ -14,6 +14,8 @@ function event(overrides: Partial<NormalizedEvent> = {}): NormalizedEvent {
     cacheCreationTokens: 0,
     rawCostUsd: null,
     lineUuid: null,
+    linesAdded: 0,
+    linesRemoved: 0,
     ...overrides,
   };
 }

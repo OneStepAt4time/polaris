@@ -76,6 +76,35 @@ describe("aggregate", () => {
     const result = aggregate(db, "custom", 2_000, 6_000, pricing);
     expect(result.totals.events).toBe(1);
   });
+
+  it("v0.23.0: sums linesAdded/linesRemoved into totals and per-model breakdown", () => {
+    db.insertEvent(sample({ requestId: "a", linesAdded: 10, linesRemoved: 5 }));
+    db.insertEvent(sample({ requestId: "b", linesAdded: 3, linesRemoved: 0 }));
+    db.insertEvent(
+      sample({
+        requestId: "c",
+        model: "claude-haiku-4-5",
+        linesAdded: 7,
+        linesRemoved: 2,
+      }),
+    );
+    const result = aggregate(db, "all", 0, Date.now() + 1, pricing);
+    expect(result.totals.linesAdded).toBe(20);
+    expect(result.totals.linesRemoved).toBe(7);
+    const sonnet = result.perModel.find((m) => m.model === "claude-sonnet-4-5");
+    const haiku = result.perModel.find((m) => m.model === "claude-haiku-4-5");
+    expect(sonnet?.linesAdded).toBe(13);
+    expect(sonnet?.linesRemoved).toBe(5);
+    expect(haiku?.linesAdded).toBe(7);
+    expect(haiku?.linesRemoved).toBe(2);
+  });
+
+  it("v0.23.0: linesAdded/linesRemoved default to 0 when EventRow omits them", () => {
+    db.insertEvent(sample({ requestId: "no-lines" }));
+    const result = aggregate(db, "all", 0, Date.now() + 1, pricing);
+    expect(result.totals.linesAdded).toBe(0);
+    expect(result.totals.linesRemoved).toBe(0);
+  });
 });
 
 describe("resolveRange", () => {
