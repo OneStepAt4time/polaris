@@ -9,12 +9,17 @@ at least one channel succeeds (failures retry on the next tick).
 
 | Env var | Default | Effect |
 |---|---|---|
-| `POLARIS_TELEGRAM_BOT_TOKEN` | `""` | Token from `@BotFather`. Empty = Telegram channel off. |
-| `POLARIS_TELEGRAM_CHAT_ID` | `""` | Destination DM / group / channel ID. |
+| `POLARIS_TELEGRAM` | `""` | `<bot_token>\|<chat_id>` — pipe-separated. Empty = Telegram channel off. |
 | `POLARIS_SLACK_WEBHOOK_URL` | `""` | Slack incoming-webhook URL. Empty = Slack channel off. |
 | `POLARIS_DISCORD_WEBHOOK_URL` | `""` | Discord webhook URL. Empty = Discord channel off. |
+| `POLARIS_WEBHOOK_URL` | `""` | Generic webhook URL. POST `{rule, dedupKey, message, source}` JSON. Empty = off. |
 | `POLARIS_DAILY_COST_THRESHOLD_USD` | `0` | Daily $ ceiling. `0` = cost-threshold rule off. |
 | `POLARIS_RATE_LIMIT_NEAR_THRESHOLD_PCT` | `0` | % utilization ceiling on Anthropic windows. `0` = rule off. |
+
+> **Breaking change in v0.21.0**: the previous `POLARIS_TELEGRAM_BOT_TOKEN`
+> + `POLARIS_TELEGRAM_CHAT_ID` pair was consolidated into a single
+> `POLARIS_TELEGRAM` env var with format `<bot_token>|<chat_id>`. Pipe
+> separator because Telegram bot tokens contain `:` themselves.
 
 The rules engine only starts when **at least one channel** is configured
 AND **at least one rule** has a non-zero threshold. The `daily-summary`
@@ -29,11 +34,11 @@ rule is enabled implicitly when the engine starts (no separate env var).
 2. Start a conversation with your new bot (otherwise it can't DM you).
 3. Visit `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser,
    look for `"chat":{"id":<YOUR_ID>,...}`, save that chat ID.
-4. Set env vars:
+4. Set env var:
    ```bash
-   POLARIS_TELEGRAM_BOT_TOKEN=123456789:ABC...
-   POLARIS_TELEGRAM_CHAT_ID=987654321
+   POLARIS_TELEGRAM=123456789:ABC-DEF...|987654321
    ```
+   Format: `<bot_token>|<chat_id>`. Pipe-separated because tokens contain `:`.
 5. Polaris messages use Markdown (`parse_mode: Markdown`).
 
 ### Slack
@@ -55,6 +60,29 @@ rule is enabled implicitly when the engine starts (no separate env var).
    POLARIS_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/123/abc
    ```
 3. Polaris posts plain text.
+
+### Webhook (generic)
+
+For any other destination — a Zapier hook, your own dashboard, a Pushover
+adapter — set:
+
+```bash
+POLARIS_WEBHOOK_URL=https://your-endpoint.example.com/polaris
+```
+
+Polaris POSTs JSON:
+
+```json
+{
+  "rule": "cost-threshold-daily",
+  "dedupKey": "2026-05-21",
+  "message": "*Polaris* — daily cost threshold crossed\n\n…",
+  "source": "polaris"
+}
+```
+
+Your endpoint should respond with any 2xx; non-2xx is treated as failure
+(retried on the next 5-min tick if no other channel succeeded).
 
 ## Rules
 
@@ -119,9 +147,9 @@ days.
 ```bash
 # 1. Boot Polaris with everything configured.
 POLARIS_AUTH_TOKEN="..." \
-POLARIS_TELEGRAM_BOT_TOKEN="..." \
-POLARIS_TELEGRAM_CHAT_ID="..." \
+POLARIS_TELEGRAM="<bot_token>|<chat_id>" \
 POLARIS_SLACK_WEBHOOK_URL="..." \
+POLARIS_WEBHOOK_URL="https://example.com/hook" \
 POLARIS_DAILY_COST_THRESHOLD_USD=0.01 \
 POLARIS_RATE_LIMIT_NEAR_THRESHOLD_PCT=80 \
   node dist/server.js
