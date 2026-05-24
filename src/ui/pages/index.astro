@@ -217,6 +217,18 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       .session-card.needs-approval {
         border-left-color: #ffaa00;
       }
+      .session-card.ended {
+        opacity: 0.7;
+      }
+      .session-card.ended .session-cwd {
+        text-decoration: line-through;
+        text-decoration-color: var(--fg-dim);
+      }
+      .session-resume {
+        margin-top: 0.4rem;
+        font-size: 0.72rem;
+        padding: 0.25rem 0.5rem;
+      }
       .session-card.needs-approval::after {
         content: " · needs approval";
         color: #ffaa00;
@@ -1135,13 +1147,22 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         }
         $("sessions-list").innerHTML = sessions
           .map((s) => {
+            const isClosed = s.status === "closed";
             const cls = [
               "session-card",
               s.id === selectedSession ? "selected" : "",
               s.pendingApprovalsCount > 0 ? "needs-approval" : "",
+              isClosed ? "ended" : "",
             ]
               .filter(Boolean)
               .join(" ");
+            const resumeBtn = isClosed
+              ? '<button type="button" class="session-resume secondary" data-resume-id="' +
+                escape(s.id) +
+                '" data-resume-cwd="' +
+                escape(s.cwd) +
+                '">Resume</button>'
+              : "";
             return (
               '<div class="' +
               cls +
@@ -1155,13 +1176,55 @@ const tagline = "Self-hosted observatory for your AI coding agents";
               escape(s.status) +
               "</span></div>" +
               settingsBadges(s) +
+              resumeBtn +
               "</div>"
             );
           })
           .join("");
         document.querySelectorAll(".session-card").forEach((el) => {
-          el.addEventListener("click", () => selectSession(el.dataset.sessionId));
+          el.addEventListener("click", (ev) => {
+            // The Resume button has its own handler — don't double-fire.
+            if (ev.target instanceof HTMLElement && ev.target.dataset.resumeId) return;
+            selectSession(el.dataset.sessionId);
+          });
         });
+        document.querySelectorAll("button[data-resume-id]").forEach((btn) => {
+          btn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            resumeSession(btn.dataset.resumeId, btn.dataset.resumeCwd, btn);
+          });
+        });
+      }
+      async function resumeSession(id, cwd, btn) {
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = "Resuming…";
+        try {
+          const res = await apiFetch("/v1/sessions/" + encodeURIComponent(id) + "/resume", {
+            method: "POST",
+            body: JSON.stringify({ cwd }),
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            const detail = body.detail || body.error || "HTTP " + res.status;
+            btn.textContent = "Resume failed";
+            appendLog("error", "Resume failed: " + detail, null);
+            setTimeout(() => {
+              btn.textContent = original;
+              btn.disabled = false;
+            }, 3000);
+            return;
+          }
+          await refreshSessions();
+          selectSession(id);
+        } catch (e) {
+          btn.textContent = "Resume failed";
+          appendLog("error", "Resume error: " + e.message, null);
+          setTimeout(() => {
+            btn.textContent = original;
+            btn.disabled = false;
+          }, 3000);
+        }
       }
       async function selectSession(id) {
         selectedSession = id;

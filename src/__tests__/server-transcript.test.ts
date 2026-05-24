@@ -107,4 +107,13 @@ describe("GET /v1/sessions/:id/transcript", () => {
     const body = res.json() as { sessions: { id: string; status: string }[] };
     expect(body.sessions.some((s) => s.id === "ended-1" && s.status === "closed")).toBe(true);
   });
+
+  it("POST /v1/sessions/:id/resume returns 404 for unknown id (v0.22.0)", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/sessions/never-existed/resume",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.statusCode).toBe(404);
+  });
 });

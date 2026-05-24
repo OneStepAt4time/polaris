@@ -230,4 +230,28 @@ describe("createSessionManager", () => {
       rmSync(fixtureDir, { recursive: true, force: true });
     }
   });
+
+  it("loadSession rehydrates a session via ACP session/load (v0.22.0)", async () => {
+    const rec = await mgr.loadSession("resume-me-1", { cwd: "/tmp/p" });
+    expect(rec.id).toBe("resume-me-1");
+    expect(rec.cwd).toBe("/tmp/p");
+    expect(rec.status).toBe("idle");
+    // After load, the session is back in the in-memory map so getSession
+    // returns it and listSessions includes it.
+    expect(mgr.getSession("resume-me-1")).not.toBeUndefined();
+    expect(mgr.listSessions().map((s) => s.id)).toContain("resume-me-1");
+  });
+
+  it("loadSession returns the existing record when the session is already live", async () => {
+    const created = await mgr.createSession({ cwd: "/tmp/p" });
+    const loaded = await mgr.loadSession(created.id, { cwd: "/tmp/p" });
+    expect(loaded.id).toBe(created.id);
+    expect(loaded.cwd).toBe("/tmp/p");
+  });
+
+  it("loadSession rejects when the agent says session/load failed (v0.22.0)", async () => {
+    await expect(mgr.loadSession("no-such-session", { cwd: "/tmp/p" })).rejects.toThrow(
+      /Unknown session/,
+    );
+  });
 });
