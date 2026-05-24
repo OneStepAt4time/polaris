@@ -77,6 +77,14 @@ function handle(msg) {
         });
         return;
       case "session/new": {
+        // v0.26.1: tests for MCP fallback pass a server named "rejects-mcp".
+        // The fixture rejects -32602 once any such server is in the list,
+        // letting SessionManager retry with an empty mcpServers array.
+        const servers = Array.isArray(msg.params?.mcpServers) ? msg.params.mcpServers : [];
+        if (servers.some((s) => s?.name === "rejects-mcp")) {
+          replyError(msg.id, -32602, "Invalid params");
+          return;
+        }
         sessionCounter += 1;
         const sessionId = `fixture-session-${sessionCounter}`;
         sessions.set(sessionId, { cwd: msg.params?.cwd ?? "" });
@@ -90,6 +98,12 @@ function handle(msg) {
         const sid = msg.params?.sessionId ?? "";
         if (sid.includes("no-such")) {
           replyError(msg.id, -32602, `Unknown session: ${sid}`);
+          return;
+        }
+        // v0.26.1: same "rejects-mcp" sentinel as session/new.
+        const lservers = Array.isArray(msg.params?.mcpServers) ? msg.params.mcpServers : [];
+        if (lservers.some((s) => s?.name === "rejects-mcp")) {
+          replyError(msg.id, -32602, "Invalid params");
           return;
         }
         sessions.set(sid, { cwd: msg.params?.cwd ?? "" });
