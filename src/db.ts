@@ -44,10 +44,28 @@ export interface SessionMessageRow {
   payloadJson: string;
 }
 
+export interface PerModelAggregateRow {
+  model: string;
+  events: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  linesAdded: number;
+  linesRemoved: number;
+  rawCostUsdSum: number | null;
+  rawCostUsdCount: number;
+}
+
 export interface PolarisDb {
   insertEvent(e: EventRow): boolean;
   countEvents(): number;
   getEventsInRange(fromMs: number, toMs: number): EventRow[];
+  /**
+   * Aggregate-by-model query used by /v1/metrics. Pushes SUM/COUNT/GROUP BY
+   * down to SQLite so the hot path returns ~5 rows instead of 10k. v0.24.0.
+   */
+  aggregateByModel(fromMs: number, toMs: number): PerModelAggregateRow[];
   wasNotified(ruleName: string, dedupKey: string): boolean;
   markNotified(ruleName: string, dedupKey: string, sentAtMs: number): void;
   insertRateLimitSample(s: RateLimitSample): void;
@@ -154,6 +172,20 @@ export function openDb(path: string): PolarisDb {
             lines_added AS linesAdded, lines_removed AS linesRemoved
      FROM events WHERE ts_ms >= ? AND ts_ms <= ? ORDER BY ts_ms ASC`,
   );
+  const aggByModelStmt = db.prepare(
+    `SELECT model,
+            COUNT(*) AS events,
+            COALESCE(SUM(input_tokens), 0) AS inputTokens,
+            COALESCE(SUM(output_tokens), 0) AS outputTokens,
+            COALESCE(SUM(cache_read_tokens), 0) AS cacheReadTokens,
+            COALESCE(SUM(cache_creation_tokens), 0) AS cacheCreationTokens,
+            COALESCE(SUM(lines_added), 0) AS linesAdded,
+            COALESCE(SUM(lines_removed), 0) AS linesRemoved,
+            SUM(raw_cost_usd) AS rawCostUsdSum,
+            COUNT(raw_cost_usd) AS rawCostUsdCount
+     FROM events WHERE ts_ms >= ? AND ts_ms <= ?
+     GROUP BY model`,
+  );
   const notifyExistsStmt = db.prepare(
     "SELECT 1 FROM notifications_sent WHERE rule_name = ? AND dedup_key = ? LIMIT 1",
   );
@@ -219,6 +251,9 @@ export function openDb(path: string): PolarisDb {
     },
     getEventsInRange: (fromMs: number, toMs: number): EventRow[] => {
       return rangeStmt.all(fromMs, toMs) as EventRow[];
+    },
+    aggregateByModel: (fromMs: number, toMs: number): PerModelAggregateRow[] => {
+      return aggByModelStmt.all(fromMs, toMs) as PerModelAggregateRow[];
     },
     wasNotified: (ruleName: string, dedupKey: string): boolean => {
       return notifyExistsStmt.get(ruleName, dedupKey) !== undefined;

@@ -151,6 +151,7 @@ want:
 - **[CHARTER.md](./CHARTER.md)** — vision, scope, architecture, dev rules, roadmap (authoritative)
 - **[docs/quickstart.md](./docs/quickstart.md)** — full install + first session walkthrough
 - **[docs/notifications.md](./docs/notifications.md)** — channel + rule configuration
+- **[docs/performance.md](./docs/performance.md)** — `npm run bench` ingest + metrics benchmarks
 - **[examples/docker-compose.yml](./examples/docker-compose.yml)** — ready-to-edit Compose file
 - **[examples/vibe-coder.mjs](./examples/vibe-coder.mjs)** — minimal Node client driving Polaris from the terminal
 - **[LICENSE](./LICENSE)** — MIT
