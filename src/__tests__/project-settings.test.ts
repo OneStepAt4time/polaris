@@ -83,4 +83,85 @@ describe("readProjectSettings", () => {
     expect(s.mcpServers).toEqual([]);
     expect(s.warnings).toEqual([]);
   });
+
+  it("v0.26.0: detects AGENTS.md alongside CLAUDE.md", () => {
+    writeFileSync(resolve(cwd, "AGENTS.md"), "# agents\n");
+    const s = readProjectSettings(cwd);
+    expect(s.agentsMdPath).toBe(resolve(cwd, "AGENTS.md"));
+    expect(s.claudeMdPath).toBeNull();
+  });
+
+  it("v0.26.0: detects .claude/settings.local.json separately from settings.json", () => {
+    mkdirSync(resolve(cwd, ".claude"));
+    writeFileSync(resolve(cwd, ".claude", "settings.local.json"), "{}");
+    const s = readProjectSettings(cwd);
+    expect(s.claudeSettingsLocalPath).toBe(resolve(cwd, ".claude", "settings.local.json"));
+    expect(s.claudeSettingsPath).toBeNull();
+  });
+
+  it("v0.26.0: deep-merges settings.local.json over settings.json and resolves the model", () => {
+    mkdirSync(resolve(cwd, ".claude"));
+    writeFileSync(
+      resolve(cwd, ".claude", "settings.json"),
+      JSON.stringify({
+        model: "claude-sonnet-4-6",
+        permissions: { allow: ["Bash(npm:*)"], deny: ["Bash(rm:*)"] },
+        hooks: { PreToolUse: [{}] },
+      }),
+    );
+    writeFileSync(
+      resolve(cwd, ".claude", "settings.local.json"),
+      JSON.stringify({
+        model: "claude-opus-4-7",
+        permissions: { allow: ["Read(./src/*)"] },
+      }),
+    );
+    const s = readProjectSettings(cwd);
+    expect(s.settings?.model).toBe("claude-opus-4-7");
+    // permissions.allow deep-merged: local replaces base entirely for the
+    // allow array (overlay value wins for non-object types).
+    expect(s.settings?.permissionsAllow).toBe(1);
+    expect(s.settings?.permissionsDeny).toBe(1);
+    expect(s.settings?.hookEvents).toEqual(["PreToolUse"]);
+  });
+
+  it("v0.26.0: lists slash commands / agents / skills / output-styles by name", () => {
+    const claudeDir = resolve(cwd, ".claude");
+    mkdirSync(claudeDir);
+    mkdirSync(resolve(claudeDir, "commands"));
+    writeFileSync(resolve(claudeDir, "commands", "deploy.md"), "# deploy");
+    writeFileSync(resolve(claudeDir, "commands", "lint.md"), "# lint");
+    mkdirSync(resolve(claudeDir, "agents"));
+    writeFileSync(resolve(claudeDir, "agents", "reviewer.md"), "# reviewer");
+    mkdirSync(resolve(claudeDir, "skills"));
+    mkdirSync(resolve(claudeDir, "skills", "do-thing"));
+    writeFileSync(resolve(claudeDir, "skills", "do-thing", "SKILL.md"), "# skill");
+    // A skills dir without SKILL.md must be ignored.
+    mkdirSync(resolve(claudeDir, "skills", "incomplete"));
+    mkdirSync(resolve(claudeDir, "output-styles"));
+    writeFileSync(resolve(claudeDir, "output-styles", "concise.md"), "# style");
+    const s = readProjectSettings(cwd);
+    expect(s.commands).toEqual(["deploy", "lint"]);
+    expect(s.agents).toEqual(["reviewer"]);
+    expect(s.skills).toEqual(["do-thing"]);
+    expect(s.outputStyles).toEqual(["concise"]);
+  });
+
+  it("v0.26.0: surfaces apiKeyHelperSet + envSet without leaking values", () => {
+    mkdirSync(resolve(cwd, ".claude"));
+    writeFileSync(
+      resolve(cwd, ".claude", "settings.json"),
+      JSON.stringify({
+        apiKeyHelper: "/usr/local/bin/get-key",
+        env: { ANTHROPIC_BASE_URL: "https://proxy.internal" },
+      }),
+    );
+    const s = readProjectSettings(cwd);
+    expect(s.settings?.apiKeyHelperSet).toBe(true);
+    expect(s.settings?.envSet).toBe(true);
+    // The raw values must NOT be in the public structure.
+    const serialised = JSON.stringify(s.settings);
+    expect(serialised).not.toContain("/usr/local/bin/get-key");
+    expect(serialised).not.toContain("proxy.internal");
+  });
 });
