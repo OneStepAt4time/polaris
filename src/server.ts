@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import sensible from "@fastify/sensible";
@@ -30,6 +30,22 @@ import { aggregateByProject } from "./metrics/projects.js";
 import { loadOAuthCredentials } from "./rate-limit/oauth.js";
 import { type PollerHandle, startRateLimitPoller } from "./rate-limit/poller.js";
 import { type EngineHandle, startEngine } from "./rules/engine.js";
+
+// v0.26.2: read version from package.json once at module load so /health
+// can never drift from package.json again (previous hardcoded string
+// stayed at "0.26.0" through the v0.26.1 release).
+const POLARIS_VERSION: string = (() => {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    // dist/server.js → ../package.json. src/server.ts (tests/dev) → ../package.json.
+    const pkg = JSON.parse(readFileSync(resolve(here, "..", "package.json"), "utf8")) as {
+      version?: string;
+    };
+    return typeof pkg.version === "string" ? pkg.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+})();
 
 const IngestBodySchema = z.object({
   sessionFile: z.string().min(1),
@@ -177,7 +193,7 @@ export async function buildServer(): Promise<BuildResult> {
   app.get("/health", () => ({
     status: "ok",
     service: "polaris",
-    version: "0.26.0",
+    version: POLARIS_VERSION,
   }));
 
   app.post("/v1/ingest", { config: { requireAuth: true } }, async (request, reply) => {
