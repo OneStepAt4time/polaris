@@ -1,6 +1,18 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildServer } from "../server.js";
+
+const PKG_VERSION = (() => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  // here = src/__tests__ → ../../package.json
+  const pkg = JSON.parse(readFileSync(resolve(here, "..", "..", "package.json"), "utf8")) as {
+    version: string;
+  };
+  return pkg.version;
+})();
 
 describe("server", () => {
   let app: FastifyInstance;
@@ -17,13 +29,13 @@ describe("server", () => {
     await app.close();
   });
 
-  it("GET /health returns 200 with service info", async () => {
+  it("GET /health returns 200 with service info (version mirrors package.json)", async () => {
     const res = await app.inject({ method: "GET", url: "/health" });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
       status: "ok",
       service: "polaris",
-      version: "0.26.0",
+      version: PKG_VERSION,
     });
   });
 
