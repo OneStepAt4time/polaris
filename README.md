@@ -99,8 +99,8 @@ walkthrough of Telegram / Slack / Discord setup and which rules fire when.
 Short version — to be DM'd on Telegram when today's spend hits $20:
 
 ```bash
-POLARIS_TELEGRAM_BOT_TOKEN=123456789:ABC...
-POLARIS_TELEGRAM_CHAT_ID=987654321
+# Format: <bot_token>|<chat_id> — pipe-separated because tokens contain ":"
+POLARIS_TELEGRAM=123456789:ABC-DEF...|987654321
 POLARIS_DAILY_COST_THRESHOLD_USD=20
 ```
 

@@ -27,14 +27,18 @@ services:
 
       # ── NOTIFICATIONS (all optional) ─────────────────────────────────────
       # Telegram. Get token from @BotFather, chat_id from /getUpdates.
-      # POLARIS_TELEGRAM_BOT_TOKEN: "123456789:ABC..."
-      # POLARIS_TELEGRAM_CHAT_ID: "987654321"
+      # Format: "<bot_token>|<chat_id>" — pipe-separated.
+      # POLARIS_TELEGRAM: "123456789:ABC-DEF...|987654321"
 
       # Slack incoming webhook
       # POLARIS_SLACK_WEBHOOK_URL: "https://hooks.slack.com/services/T/X/Y"
 
       # Discord webhook
       # POLARIS_DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/123/abc"
+
+      # Generic webhook — Polaris POSTs {rule, dedupKey, message, source}
+      # JSON to this URL. Use for Pushover, Zapier, your own dashboard, etc.
+      # POLARIS_WEBHOOK_URL: "https://example.com/polaris-hook"
 
       # ── RULES (all optional; engine starts when channels + any rule are set) ──
       # Alert when today's spend crosses this $ ceiling (one alert per UTC day).

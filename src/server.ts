@@ -13,7 +13,8 @@ import type { Channel } from "./channels/channel.js";
 import { makeDiscordChannel } from "./channels/discord.js";
 import { makeSlackChannel } from "./channels/slack.js";
 import { makeTelegramChannel } from "./channels/telegram.js";
-import { type Config, loadConfig } from "./config.js";
+import { makeWebhookChannel } from "./channels/webhook.js";
+import { type Config, loadConfig, parseTelegramEnv } from "./config.js";
 import { type PolarisDb, openDb } from "./db.js";
 import { ingest } from "./ingest/ingest.js";
 import { type WatcherHandle, startWatcher } from "./ingest/jsonl-watcher.js";
@@ -105,19 +106,18 @@ export async function buildServer(): Promise<BuildResult> {
   // every 5 min and deduplicates via the notifications_sent table.
   let rulesEngine: EngineHandle | null = null;
   const channels: Channel[] = [];
-  if (config.telegramBotToken !== "" && config.telegramChatId !== "") {
-    channels.push(
-      makeTelegramChannel({
-        botToken: config.telegramBotToken,
-        chatId: config.telegramChatId,
-      }),
-    );
+  const tg = parseTelegramEnv(config.telegram);
+  if (tg !== null) {
+    channels.push(makeTelegramChannel({ botToken: tg.botToken, chatId: tg.chatId }));
   }
   if (config.slackWebhookUrl !== "") {
     channels.push(makeSlackChannel({ webhookUrl: config.slackWebhookUrl }));
   }
   if (config.discordWebhookUrl !== "") {
     channels.push(makeDiscordChannel({ webhookUrl: config.discordWebhookUrl }));
+  }
+  if (config.webhookUrl !== "") {
+    channels.push(makeWebhookChannel({ url: config.webhookUrl }));
   }
   const hasAnyRule = config.dailyCostThresholdUsd > 0 || config.rateLimitNearThresholdPct > 0;
   if (channels.length > 0 && hasAnyRule) {
@@ -172,7 +172,7 @@ export async function buildServer(): Promise<BuildResult> {
   app.get("/health", () => ({
     status: "ok",
     service: "polaris",
-    version: "0.20.0",
+    version: "0.21.0",
   }));
 
   app.post("/v1/ingest", { config: { requireAuth: true } }, async (request, reply) => {
