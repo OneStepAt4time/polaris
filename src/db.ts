@@ -12,6 +12,10 @@ export interface EventRow {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   rawCostUsd: number | null;
+  /** Lines added by Edit/Write/MultiEdit tool calls on this event. v0.23.0. */
+  linesAdded?: number;
+  /** Lines removed by Edit/MultiEdit tool calls on this event. v0.23.0. */
+  linesRemoved?: number;
 }
 
 export interface RateLimitSample {
@@ -102,6 +106,11 @@ const MIGRATIONS: readonly string[] = [
      payload_json TEXT NOT NULL
    )`,
   "CREATE INDEX IF NOT EXISTS idx_session_messages_sid ON session_messages(session_id, ts_ms)",
+  // v0.23.0: line acceptance metrics. ALTER TABLE ADD COLUMN with default 0
+  // is backward-compatible with rows already in the DB — old events read as 0
+  // lines, new ones are populated by parser.ts.
+  "ALTER TABLE events ADD COLUMN lines_added INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE events ADD COLUMN lines_removed INTEGER NOT NULL DEFAULT 0",
 ];
 
 function runMigrations(db: DatabaseType): void {
@@ -130,16 +139,19 @@ export function openDb(path: string): PolarisDb {
   const insertStmt = db.prepare(
     `INSERT OR IGNORE INTO events
      (request_id, session_file, ts_ms, model, input_tokens, output_tokens,
-      cache_read_tokens, cache_creation_tokens, raw_cost_usd)
+      cache_read_tokens, cache_creation_tokens, raw_cost_usd,
+      lines_added, lines_removed)
      VALUES (@requestId, @sessionFile, @tsMs, @model, @inputTokens, @outputTokens,
-      @cacheReadTokens, @cacheCreationTokens, @rawCostUsd)`,
+      @cacheReadTokens, @cacheCreationTokens, @rawCostUsd,
+      @linesAdded, @linesRemoved)`,
   );
   const countStmt = db.prepare("SELECT COUNT(*) AS n FROM events");
   const rangeStmt = db.prepare(
     `SELECT request_id AS requestId, session_file AS sessionFile, ts_ms AS tsMs,
             model, input_tokens AS inputTokens, output_tokens AS outputTokens,
             cache_read_tokens AS cacheReadTokens, cache_creation_tokens AS cacheCreationTokens,
-            raw_cost_usd AS rawCostUsd
+            raw_cost_usd AS rawCostUsd,
+            lines_added AS linesAdded, lines_removed AS linesRemoved
      FROM events WHERE ts_ms >= ? AND ts_ms <= ? ORDER BY ts_ms ASC`,
   );
   const notifyExistsStmt = db.prepare(
@@ -194,7 +206,11 @@ export function openDb(path: string): PolarisDb {
 
   return {
     insertEvent: (e: EventRow): boolean => {
-      const info = insertStmt.run(e);
+      const info = insertStmt.run({
+        ...e,
+        linesAdded: e.linesAdded ?? 0,
+        linesRemoved: e.linesRemoved ?? 0,
+      });
       return info.changes > 0;
     },
     countEvents: (): number => {
