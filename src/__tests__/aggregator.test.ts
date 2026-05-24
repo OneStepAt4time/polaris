@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type EventRow, type PolarisDb, openDb } from "../db.js";
-import { aggregate, resolveRange } from "../metrics/aggregator.js";
+import { aggregate, resolvePreviousRange, resolveRange } from "../metrics/aggregator.js";
 import { loadPricing } from "../metrics/pricing.js";
 
 const pricing = loadPricing();
@@ -142,5 +142,44 @@ describe("resolveRange", () => {
     const r = resolveRange("all", now);
     expect(r.fromMs).toBe(0);
     expect(r.toMs).toBe(now);
+  });
+});
+
+describe("resolvePreviousRange (v0.25.0)", () => {
+  const now = Date.parse("2026-05-21T15:30:00.000Z");
+  const HOUR = 60 * 60 * 1000;
+  const DAY = 24 * HOUR;
+
+  it("returns null for 'all' (no meaningful predecessor)", () => {
+    expect(resolvePreviousRange("all", now)).toBeNull();
+  });
+
+  it("1h -> hour before the current hour", () => {
+    const r = resolvePreviousRange("1h", now);
+    expect(r).toEqual({ fromMs: now - 2 * HOUR, toMs: now - HOUR });
+  });
+
+  it("12h -> 12 hours before the 12h window", () => {
+    const r = resolvePreviousRange("12h", now);
+    expect(r).toEqual({ fromMs: now - 24 * HOUR, toMs: now - 12 * HOUR });
+  });
+
+  it("today -> yesterday truncated to same elapsed-of-day", () => {
+    const r = resolvePreviousRange("today", now);
+    // 2026-05-21T00:00:00 → 2026-05-21T15:30:00 is the current day window.
+    // Previous: 2026-05-20T00:00:00 → 2026-05-20T15:30:00.
+    expect(r).not.toBeNull();
+    expect(new Date(r?.fromMs ?? 0).toISOString()).toBe("2026-05-20T00:00:00.000Z");
+    expect(new Date(r?.toMs ?? 0).toISOString()).toBe("2026-05-20T15:30:00.000Z");
+  });
+
+  it("7d -> the preceding 7d window", () => {
+    const r = resolvePreviousRange("7d", now);
+    expect(r).toEqual({ fromMs: now - 14 * DAY, toMs: now - 7 * DAY });
+  });
+
+  it("30d -> the preceding 30d window", () => {
+    const r = resolvePreviousRange("30d", now);
+    expect(r).toEqual({ fromMs: now - 60 * DAY, toMs: now - 30 * DAY });
   });
 });

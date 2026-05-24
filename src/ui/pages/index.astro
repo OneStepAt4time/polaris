@@ -71,6 +71,23 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         color: var(--fg);
         margin-top: 0.25rem;
       }
+      .delta {
+        font-size: 0.7rem;
+        margin-left: 0.4rem;
+        padding: 0.05rem 0.35rem;
+        border-radius: 3px;
+        font-weight: 600;
+        vertical-align: 4px;
+        font-variant-numeric: tabular-nums;
+      }
+      .delta.up {
+        background: rgba(255, 102, 102, 0.15);
+        color: var(--danger);
+      }
+      .delta.down {
+        background: rgba(102, 204, 102, 0.18);
+        color: var(--success);
+      }
       .per-model {
         margin-top: 2rem;
       }
@@ -745,18 +762,63 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         if (ratio >= 1000) return (ratio / 1000).toFixed(1) + "K";
         return ratio.toFixed(0);
       }
+      // v0.25.0: percent-delta vs previous period. Returns a small HTML chip
+      // like <span class="delta up">+12%</span>. Skipped when previous is
+      // null/zero (no meaningful comparison).
+      function deltaChip(curr, prev) {
+        if (typeof prev !== "number" || prev <= 0) return "";
+        const ratio = curr / prev - 1;
+        const pct = ratio * 100;
+        const sign = pct >= 0 ? "+" : "";
+        // Up/down here is about value direction; the CSS picks a color but
+        // intentionally doesn't moralize ("+12% cost" = bad, "+12% lines" =
+        // good is context-dependent).
+        const dir = pct >= 0 ? "up" : "down";
+        const label = `${sign}${pct.toFixed(0)}%`;
+        return ` <span class="delta ${dir}">${label}</span>`;
+      }
       function renderMetrics(data) {
+        const prev = data.previous?.totals ?? null;
         const kpis = [
-          { label: "Total cost", value: formatUsd(data.totals.costUsd) },
-          { label: "Events", value: String(data.totals.events) },
-          { label: "Input tokens", value: formatTokens(data.totals.inputTokens) },
-          { label: "Output tokens", value: formatTokens(data.totals.outputTokens) },
-          { label: "Cache reads", value: formatTokens(data.totals.cacheReadTokens) },
-          { label: "Lines added", value: formatTokens(data.totals.linesAdded ?? 0) },
-          { label: "Lines removed", value: formatTokens(data.totals.linesRemoved ?? 0) },
+          {
+            label: "Total cost",
+            value: formatUsd(data.totals.costUsd),
+            delta: deltaChip(data.totals.costUsd, prev?.costUsd ?? null),
+          },
+          {
+            label: "Events",
+            value: String(data.totals.events),
+            delta: deltaChip(data.totals.events, prev?.events ?? null),
+          },
+          {
+            label: "Input tokens",
+            value: formatTokens(data.totals.inputTokens),
+            delta: deltaChip(data.totals.inputTokens, prev?.inputTokens ?? null),
+          },
+          {
+            label: "Output tokens",
+            value: formatTokens(data.totals.outputTokens),
+            delta: deltaChip(data.totals.outputTokens, prev?.outputTokens ?? null),
+          },
+          {
+            label: "Cache reads",
+            value: formatTokens(data.totals.cacheReadTokens),
+            delta: deltaChip(data.totals.cacheReadTokens, prev?.cacheReadTokens ?? null),
+          },
+          {
+            label: "Lines added",
+            value: formatTokens(data.totals.linesAdded ?? 0),
+            delta: deltaChip(data.totals.linesAdded ?? 0, prev?.linesAdded ?? null),
+          },
+          {
+            label: "Lines removed",
+            value: formatTokens(data.totals.linesRemoved ?? 0),
+            delta: deltaChip(data.totals.linesRemoved ?? 0, prev?.linesRemoved ?? null),
+          },
           {
             label: "Tokens / line",
             value: efficiency(data.totals.outputTokens, data.totals.linesAdded ?? 0),
+            delta: "",
           },
         ];
         $("kpis").innerHTML = kpis
@@ -766,6 +828,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
               k.label +
               '</div><div class="kpi-value">' +
               k.value +
+              (k.delta ?? "") +
               "</div></div>",
           )
           .join("");

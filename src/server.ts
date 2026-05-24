@@ -18,7 +18,12 @@ import { type Config, loadConfig, parseTelegramEnv } from "./config.js";
 import { type PolarisDb, openDb } from "./db.js";
 import { ingest } from "./ingest/ingest.js";
 import { type WatcherHandle, startWatcher } from "./ingest/jsonl-watcher.js";
-import { type TimeRange, aggregate, resolveRange } from "./metrics/aggregator.js";
+import {
+  type TimeRange,
+  aggregate,
+  resolvePreviousRange,
+  resolveRange,
+} from "./metrics/aggregator.js";
 import { aggregateHeatmap, isHeatmapMetric } from "./metrics/heatmap.js";
 import { loadPricing } from "./metrics/pricing.js";
 import { aggregateByProject } from "./metrics/projects.js";
@@ -172,7 +177,7 @@ export async function buildServer(): Promise<BuildResult> {
   app.get("/health", () => ({
     status: "ok",
     service: "polaris",
-    version: "0.24.0",
+    version: "0.25.0",
   }));
 
   app.post("/v1/ingest", { config: { requireAuth: true } }, async (request, reply) => {
@@ -195,7 +200,20 @@ export async function buildServer(): Promise<BuildResult> {
     const range: TimeRange = parsed.data;
     const { fromMs, toMs } = resolveRange(range);
     const pricing = loadPricing();
-    return reply.send(aggregate(db, range, fromMs, toMs, pricing));
+    const result = aggregate(db, range, fromMs, toMs, pricing);
+    // v0.25.0: also compute the previous-period block so the UI can render
+    // % deltas on each KPI tile. Skipped for `range=all` where there's no
+    // meaningful predecessor.
+    const prevRange = resolvePreviousRange(range);
+    if (prevRange !== null) {
+      const prev = aggregate(db, range, prevRange.fromMs, prevRange.toMs, pricing);
+      result.previous = {
+        fromMs: prevRange.fromMs,
+        toMs: prevRange.toMs,
+        totals: prev.totals,
+      };
+    }
+    return reply.send(result);
   });
 
   app.get("/v1/projects", { config: { requireAuth: true } }, async (request, reply) => {

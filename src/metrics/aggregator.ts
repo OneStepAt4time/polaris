@@ -28,12 +28,23 @@ export interface MetricsTotals {
   linesRemoved: number;
 }
 
+export interface PreviousPeriod {
+  fromMs: number;
+  toMs: number;
+  totals: MetricsTotals;
+}
+
 export interface MetricsResult {
   range: string;
   fromMs: number;
   toMs: number;
   totals: MetricsTotals;
   perModel: PerModelMetrics[];
+  /**
+   * Same-shape window directly before [fromMs, toMs]. Omitted when the
+   * requested range is "all" (no meaningful predecessor). v0.25.0.
+   */
+  previous?: PreviousPeriod;
 }
 
 export type TimeRange = "1h" | "12h" | "today" | "7d" | "30d" | "all";
@@ -62,6 +73,31 @@ export function resolveRange(
     case "all":
       return { fromMs: 0, toMs: now };
   }
+}
+
+/**
+ * Returns the "same shape" window directly before the requested range,
+ * truncated to the equivalent time-of-day so "today vs yesterday up to the
+ * same minute" lines up correctly. Returns null for "all" (no meaningful
+ * predecessor). v0.25.0.
+ */
+export function resolvePreviousRange(
+  range: TimeRange,
+  now: number = Date.now(),
+): { fromMs: number; toMs: number } | null {
+  if (range === "all") return null;
+  if (range === "1h") return { fromMs: now - 2 * HOUR_MS, toMs: now - HOUR_MS };
+  if (range === "12h") return { fromMs: now - 24 * HOUR_MS, toMs: now - 12 * HOUR_MS };
+  if (range === "today") {
+    const today = new Date(now);
+    today.setUTCHours(0, 0, 0, 0);
+    const elapsedToday = now - today.getTime();
+    const yesterdayStart = today.getTime() - DAY_MS;
+    return { fromMs: yesterdayStart, toMs: yesterdayStart + elapsedToday };
+  }
+  if (range === "7d") return { fromMs: now - 14 * DAY_MS, toMs: now - 7 * DAY_MS };
+  if (range === "30d") return { fromMs: now - 60 * DAY_MS, toMs: now - 30 * DAY_MS };
+  return null;
 }
 
 export function aggregate(
