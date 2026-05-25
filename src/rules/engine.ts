@@ -1,6 +1,7 @@
 import type { Channel } from "../channels/channel.js";
 import type { PolarisDb } from "../db.js";
 import type { PricingTable } from "../metrics/pricing.js";
+import { type ApprovalNeededConfig, checkApprovalNeeded } from "./approval-needed.js";
 import { type CostThresholdConfig, type RuleMatch, checkCostThreshold } from "./cost-threshold.js";
 import { type DailySummaryConfig, checkDailySummary } from "./daily-summary.js";
 import { type RateLimitNearConfig, checkRateLimitNear } from "./rate-limit-near.js";
@@ -11,6 +12,8 @@ export interface EngineConfig {
   rateLimitNear?: RateLimitNearConfig | null;
   dailySummary?: DailySummaryConfig | null;
   sessionFailed?: SessionFailedConfig | null;
+  /** v0.27.0: notify when any session has a pending tool-permission approval. */
+  approvalNeeded?: ApprovalNeededConfig | null;
   channels: Channel[];
   intervalMs: number;
 }
@@ -43,6 +46,9 @@ export function evaluateRules(
   }
   if (cfg.sessionFailed !== null && cfg.sessionFailed !== undefined) {
     matches.push(...checkSessionFailed(cfg.sessionFailed));
+  }
+  if (cfg.approvalNeeded !== null && cfg.approvalNeeded !== undefined) {
+    matches.push(...checkApprovalNeeded(cfg.approvalNeeded));
   }
   return matches;
 }

@@ -3,6 +3,7 @@ import type { Channel, ChannelResult } from "../channels/channel.js";
 import { makeTelegramChannel } from "../channels/telegram.js";
 import { type PolarisDb, openDb } from "../db.js";
 import type { PricingTable } from "../metrics/pricing.js";
+import { checkApprovalNeeded, extractToolName } from "../rules/approval-needed.js";
 import { evaluateRules, startEngine } from "../rules/engine.js";
 
 const PRICING: PricingTable = {
@@ -70,6 +71,62 @@ describe("evaluateRules", () => {
     });
     expect(matches).toHaveLength(1);
     expect(matches[0]?.ruleName).toBe("cost-threshold-daily");
+  });
+
+  // v0.27.0 — approval-needed rule
+  it("returns one match per pending approval (v0.27.0)", () => {
+    const approvals = [
+      {
+        sessionId: "aaaa-bbbb-cccc",
+        cwd: "/home/user/project",
+        approvalId: "ap-001",
+        receivedAt: Date.now(),
+        toolName: "Bash",
+      },
+      {
+        sessionId: "dddd-eeee-ffff",
+        cwd: "/home/user/other",
+        approvalId: "ap-002",
+        receivedAt: Date.now(),
+        toolName: "Edit",
+      },
+    ];
+    const matches = evaluateRules(db, PRICING, {
+      costThreshold: null,
+      approvalNeeded: { approvalsSource: () => approvals },
+      channels: [],
+      intervalMs: 1000,
+    });
+    expect(matches).toHaveLength(2);
+    expect(matches[0]?.dedupKey).toBe("ap-001");
+    expect(matches[0]?.ruleName).toMatch(/^approval-needed:/);
+    expect(matches[0]?.message).toContain("Bash");
+    expect(matches[1]?.dedupKey).toBe("ap-002");
+  });
+
+  it("approval-needed: dedup suppresses the same approvalId on second tick", async () => {
+    const approval = {
+      sessionId: "sess-001",
+      cwd: "/p",
+      approvalId: "ap-dedup",
+      receivedAt: Date.now(),
+      toolName: "Bash",
+    };
+    const sends: RecordedSend[] = [];
+    const engine = startEngine(db, PRICING, {
+      costThreshold: null,
+      approvalNeeded: { approvalsSource: () => [approval] },
+      channels: [recordingChannel("mock", { ok: true, status: 200 }, sends)],
+      intervalMs: 1000,
+    });
+    try {
+      await engine.tick();
+      await engine.tick();
+    } finally {
+      engine.stop();
+    }
+    // same approvalId — should only fire once
+    expect(sends).toHaveLength(1);
   });
 });
 
@@ -271,5 +328,25 @@ describe("startEngine().tick() — multi-channel fan-out", () => {
     }
     const today = new Date().toISOString().slice(0, 10);
     expect(db.wasNotified("cost-threshold-daily", today)).toBe(false);
+  });
+});
+
+describe("extractToolName (v0.27.0)", () => {
+  it("reads toolUse.name (real claude-agent-acp shape)", () => {
+    expect(extractToolName({ toolUse: { name: "Bash" } })).toBe("Bash");
+  });
+  it("reads toolCall.title as fallback", () => {
+    expect(extractToolName({ toolCall: { title: "Read File" } })).toBe("Read File");
+  });
+  it("reads toolCall.toolName as fallback", () => {
+    expect(extractToolName({ toolCall: { toolName: "Edit" } })).toBe("Edit");
+  });
+  it("reads toolCall.kind as last resort", () => {
+    expect(extractToolName({ toolCall: { kind: "bash_execute" } })).toBe("bash_execute");
+  });
+  it("returns 'unknown' for null / non-object / empty", () => {
+    expect(extractToolName(null)).toBe("unknown");
+    expect(extractToolName({})).toBe("unknown");
+    expect(extractToolName({ toolUse: { name: "" } })).toBe("unknown");
   });
 });
