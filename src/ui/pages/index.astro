@@ -1251,7 +1251,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
           lines.push(`<div class="session-settings">${settingsLine.join(" · ")}</div>`);
         if (Array.isArray(cfg.warnings) && cfg.warnings.length > 0) {
           lines.push(
-            `<div class="session-settings warning">⚠ ${cfg.warnings.length} parse warning${cfg.warnings.length > 1 ? "s" : ""}</div>`,
+            `<div class="session-settings warning">⚠ ${cfg.warnings.length} warning${cfg.warnings.length > 1 ? "s" : ""}</div>`,
           );
         }
         return lines.join("");

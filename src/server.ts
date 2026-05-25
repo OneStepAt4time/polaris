@@ -29,6 +29,7 @@ import { loadPricing } from "./metrics/pricing.js";
 import { aggregateByProject } from "./metrics/projects.js";
 import { loadOAuthCredentials } from "./rate-limit/oauth.js";
 import { type PollerHandle, startRateLimitPoller } from "./rate-limit/poller.js";
+import { extractToolName } from "./rules/approval-needed.js";
 import { type EngineHandle, startEngine } from "./rules/engine.js";
 
 // v0.26.2: read version from package.json once at module load so /health
@@ -162,6 +163,29 @@ export async function buildServer(): Promise<BuildResult> {
         //       returns [] until the manager has been spawned. v0.15.0.
         sessionFailed: {
           failuresSource: () => sessionManager?.recentFailures() ?? [],
+        },
+        // v0.27.0: fire when any active session is waiting for a tool-
+        // permission approval. Each distinct approvalId is notified once;
+        // once the user approves/denies the approval disappears and the
+        // rule goes quiet. Enabled whenever channels are wired (same
+        // condition as the engine itself — no new env var).
+        approvalNeeded: {
+          approvalsSource: () => {
+            const mgr = sessionManager;
+            if (!mgr) return [];
+            return mgr
+              .listSessions()
+              .filter((s) => (s.pendingApprovalsCount ?? 0) > 0)
+              .flatMap((s) =>
+                mgr.listApprovals(s.id).map((a) => ({
+                  sessionId: s.id,
+                  cwd: s.cwd,
+                  approvalId: a.approvalId,
+                  receivedAt: a.receivedAt,
+                  toolName: extractToolName(a.params),
+                })),
+              );
+          },
         },
         channels,
         intervalMs: 5 * 60 * 1000,
