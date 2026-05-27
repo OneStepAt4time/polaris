@@ -527,6 +527,40 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       .project-star:hover { color: var(--accent); }
       .project-star.is-starred { color: #ffd54a; }
       .project-card.starred .project-name code { color: var(--accent); }
+      /* v0.32.0 — hide button sits to the right of the name. Same visual
+         weight as the star so they read as a small action row. */
+      .project-hide {
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        font-size: 0.95rem;
+        line-height: 1;
+        color: var(--fg-dim);
+        padding: 0 0.1rem;
+        margin-left: auto;
+      }
+      .project-hide:hover { color: var(--danger); }
+      /* Footer with the hidden-projects toggle. Visually quieter than a
+         primary action; only appears when at least one project is hidden. */
+      .hidden-projects-footer {
+        margin-top: 0.75rem;
+        font-size: 0.8rem;
+        color: var(--fg-dim);
+      }
+      .hidden-projects-footer button {
+        background: transparent;
+        border: 1px dashed var(--border);
+        color: var(--fg-dim);
+        border-radius: 4px;
+        padding: 0.3rem 0.65rem;
+        cursor: pointer;
+        font-size: 0.75rem;
+      }
+      .hidden-projects-footer button:hover {
+        color: var(--fg);
+        border-color: var(--fg-dim);
+      }
+      .project-card.is-hidden { opacity: 0.55; }
       .project-row {
         display: flex;
         justify-content: space-between;
@@ -959,6 +993,47 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         return set;
       }
 
+      // v0.32.0 — hidden projects drop out of the main grid and into a
+      // collapsible "N hidden · Show" footer. Same per-browser-local
+      // localStorage convention as starred + project-filter.
+      const HIDDEN_KEY = "polaris.hiddenProjects";
+      function getHidden() {
+        try {
+          const raw = localStorage.getItem(HIDDEN_KEY);
+          if (!raw) return new Set();
+          const arr = JSON.parse(raw);
+          return new Set(Array.isArray(arr) ? arr : []);
+        } catch {
+          return new Set();
+        }
+      }
+      function setHidden(set) {
+        localStorage.setItem(HIDDEN_KEY, JSON.stringify([...set]));
+      }
+      function toggleHidden(name) {
+        const set = getHidden();
+        if (set.has(name)) set.delete(name);
+        else set.add(name);
+        setHidden(set);
+        return set;
+      }
+      // When a project is hidden in the same session it was starred, drop
+      // the star — they're mutually exclusive in CCMeter and we mirror that.
+      function hideProject(name) {
+        const stars = getStarred();
+        if (stars.has(name)) {
+          stars.delete(name);
+          setStarred(stars);
+        }
+        const hidden = getHidden();
+        hidden.add(name);
+        setHidden(hidden);
+      }
+      // Whether the "show hidden" toggle in the footer is expanded. Session-
+      // scoped (not persisted) — opening hidden every reload would defeat the
+      // purpose of hiding.
+      let hiddenExpanded = false;
+
       const formatUsd = (n) => {
         if (!Number.isFinite(n) || n <= 0) return "$0";
         if (n >= 1000) return "$" + (n / 1000).toFixed(1) + "K";
@@ -1267,62 +1342,91 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         }
         // v0.30.0 — starred projects come first, then unstarred. Within each
         // group the existing cost-desc order coming from the API is preserved.
+        // v0.32.0 — hidden projects move to a separate collapsed group below.
         const starred = getStarred();
+        const hidden = getHidden();
         const ordered = data.projects.slice().sort((a, b) => {
           const aStar = starred.has(a.name);
           const bStar = starred.has(b.name);
           if (aStar !== bStar) return aStar ? -1 : 1;
           return (b.costUsd ?? 0) - (a.costUsd ?? 0);
         });
-        $("projects").innerHTML = ordered
-          .map((p) => {
-            const tpl = p.outputPerLine ?? 0;
-            const eff = efficiencyTier(tpl);
-            const linesAdded = p.linesAdded ?? 0;
-            const linesRemoved = p.linesRemoved ?? 0;
-            const isStarred = starred.has(p.name);
-            const starIcon = isStarred ? "★" : "☆";
-            const linesRow =
-              linesAdded > 0 || linesRemoved > 0
-                ? '<div class="project-row project-lines">' +
-                  '<span><span class="added">+' + formatTokens(linesAdded) +
-                  '</span> <span class="removed">-' + formatTokens(linesRemoved) + "</span></span>" +
-                  '<span class="project-meta">' +
-                  p.sessions + " sess · " + p.events + " ev</span>" +
-                  "</div>"
-                : '<div class="project-row"><span class="project-meta">' +
-                  p.sessions + " sess · " + p.events + " ev</span></div>";
-            const tplLabel = tpl > 0 ? Math.round(tpl) + " tok/ln" : "no lines yet";
-            return (
-              '<div class="project-card' + (isStarred ? " starred" : "") + '">' +
-              '<div class="project-name">' +
-              '<button type="button" class="project-star' + (isStarred ? " is-starred" : "") +
-              '" data-star="' + escape(p.name) + '" title="' +
-              (isStarred ? "Unstar" : "Star") + '">' + starIcon + "</button>" +
-              '<span data-project-filter="' + escape(p.name) + '">' + escape(p.name) + "</span>" +
-              "</div>" +
-              '<div class="project-row">' +
-              '<span class="project-cost">' + formatUsd(p.costUsd) + "</span>" +
-              '<span class="project-meta">⏱ ' +
-              escape(formatActiveDuration(p.activeMs ?? 0)) +
-              "</span>" +
-              "</div>" +
-              '<div class="project-row project-tokens">' +
-              "in <code>" + formatTokens(p.inputTokens) + "</code> · " +
-              "out <code>" + formatTokens(p.outputTokens) + "</code> · " +
-              "cache <code>" + formatTokens(p.cacheReadTokens) + "</code>" +
-              "</div>" +
-              linesRow +
-              '<div class="project-eff">' +
-              '<div class="project-eff-bar"><div class="project-eff-fill ' +
-              eff.cls + '" style="width:' + eff.pct + '%"></div></div>' +
-              '<span class="project-eff-label">' + escape(tplLabel) + "</span>" +
-              "</div>" +
-              (stackedSparkline(p.dailyByFamily) || sparklineSvg(p.dailyCostUsd)) +
+        const visibleProjects = ordered.filter((p) => !hidden.has(p.name));
+        const hiddenProjects = ordered.filter((p) => hidden.has(p.name));
+
+        const cardHtml = (p, isHidden) => {
+          const tpl = p.outputPerLine ?? 0;
+          const eff = efficiencyTier(tpl);
+          const linesAdded = p.linesAdded ?? 0;
+          const linesRemoved = p.linesRemoved ?? 0;
+          const isStarred = starred.has(p.name);
+          const starIcon = isStarred ? "★" : "☆";
+          const linesRow =
+            linesAdded > 0 || linesRemoved > 0
+              ? '<div class="project-row project-lines">' +
+                '<span><span class="added">+' + formatTokens(linesAdded) +
+                '</span> <span class="removed">-' + formatTokens(linesRemoved) + "</span></span>" +
+                '<span class="project-meta">' +
+                p.sessions + " sess · " + p.events + " ev</span>" +
+                "</div>"
+              : '<div class="project-row"><span class="project-meta">' +
+                p.sessions + " sess · " + p.events + " ev</span></div>";
+          const tplLabel = tpl > 0 ? Math.round(tpl) + " tok/ln" : "no lines yet";
+          const hideTitle = isHidden ? "Unhide" : "Hide";
+          const hideIcon = isHidden ? "↺" : "✕";
+          const classes = ["project-card"];
+          if (isStarred && !isHidden) classes.push("starred");
+          if (isHidden) classes.push("is-hidden");
+          return (
+            '<div class="' + classes.join(" ") + '">' +
+            '<div class="project-name">' +
+            '<button type="button" class="project-star' + (isStarred ? " is-starred" : "") +
+            '" data-star="' + escape(p.name) + '" title="' +
+            (isStarred ? "Unstar" : "Star") + '">' + starIcon + "</button>" +
+            '<span data-project-filter="' + escape(p.name) + '">' + escape(p.name) + "</span>" +
+            '<button type="button" class="project-hide" data-hide="' + escape(p.name) +
+            '" title="' + hideTitle + '">' + hideIcon + "</button>" +
+            "</div>" +
+            '<div class="project-row">' +
+            '<span class="project-cost">' + formatUsd(p.costUsd) + "</span>" +
+            '<span class="project-meta">⏱ ' +
+            escape(formatActiveDuration(p.activeMs ?? 0)) +
+            "</span>" +
+            "</div>" +
+            '<div class="project-row project-tokens">' +
+            "in <code>" + formatTokens(p.inputTokens) + "</code> · " +
+            "out <code>" + formatTokens(p.outputTokens) + "</code> · " +
+            "cache <code>" + formatTokens(p.cacheReadTokens) + "</code>" +
+            "</div>" +
+            linesRow +
+            '<div class="project-eff">' +
+            '<div class="project-eff-bar"><div class="project-eff-fill ' +
+            eff.cls + '" style="width:' + eff.pct + '%"></div></div>' +
+            '<span class="project-eff-label">' + escape(tplLabel) + "</span>" +
+            "</div>" +
+            (stackedSparkline(p.dailyByFamily) || sparklineSvg(p.dailyCostUsd)) +
+            "</div>"
+          );
+        };
+
+        const visibleHtml = visibleProjects.map((p) => cardHtml(p, false)).join("");
+        let hiddenHtml = "";
+        if (hiddenProjects.length > 0) {
+          const toggleLabel = hiddenExpanded
+            ? "Hide hidden (" + hiddenProjects.length + ")"
+            : hiddenProjects.length + " hidden · Show";
+          const hiddenCards = hiddenExpanded
+            ? '<div class="projects" id="hidden-projects-grid">' +
+              hiddenProjects.map((p) => cardHtml(p, true)).join("") +
               "</div>"
-            );
-          })
-          .join("");
+            : "";
+          hiddenHtml =
+            '<div class="hidden-projects-footer">' +
+            '<button type="button" id="toggle-hidden">' + escape(toggleLabel) + "</button>" +
+            "</div>" +
+            hiddenCards;
+        }
+        $("projects").innerHTML = visibleHtml + hiddenHtml;
         // v0.30.0 — wire the star toggle. One delegated listener per render
         // is cheaper than per-card listeners and keeps the markup clean.
         $("projects").querySelectorAll(".project-star[data-star]").forEach((btn) => {
@@ -1344,6 +1448,26 @@ const tagline = "Self-hosted observatory for your AI coding agents";
             reloadDashboard();
           });
         });
+        // v0.32.0 — hide (✕) / unhide (↺) per-card buttons.
+        $("projects").querySelectorAll(".project-hide[data-hide]").forEach((btn) => {
+          btn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            const name = btn.getAttribute("data-hide");
+            if (!name) return;
+            const hidden = getHidden();
+            if (hidden.has(name)) toggleHidden(name);
+            else hideProject(name);
+            if (lastProjectsData) renderProjects(lastProjectsData);
+          });
+        });
+        // v0.32.0 — collapse/expand the hidden-projects footer toggle.
+        const toggleBtn = document.getElementById("toggle-hidden");
+        if (toggleBtn) {
+          toggleBtn.addEventListener("click", () => {
+            hiddenExpanded = !hiddenExpanded;
+            if (lastProjectsData) renderProjects(lastProjectsData);
+          });
+        }
       }
       // Last successful /v1/projects payload, so toggling a star re-renders
       // without hitting the network.
