@@ -880,6 +880,25 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         gap: 2px;
       }
       .heatmap-card-grid .heatmap-cell { width: 9px; height: 9px; }
+      /* v0.37.0 — daily trend sparkline under each heatmap card. Mirrors
+         the dashed-line micro-charts CCMeter renders below its 4-up
+         headline visuals. */
+      .heatmap-card-trend {
+        margin-top: 0.45rem;
+        height: 22px;
+        opacity: 0.85;
+      }
+      .heatmap-card-trend svg { width: 100%; height: 100%; display: block; }
+      .heatmap-card-trend path { fill: none; stroke-width: 1.25; }
+      .heatmap-card-trend .area { stroke: none; opacity: 0.18; }
+      .heatmap-card[data-metric="inputTokens"]  .heatmap-card-trend path:not(.area) { stroke: #69b8ff; }
+      .heatmap-card[data-metric="inputTokens"]  .heatmap-card-trend .area           { fill: #69b8ff; }
+      .heatmap-card[data-metric="outputTokens"] .heatmap-card-trend path:not(.area) { stroke: #c597ff; }
+      .heatmap-card[data-metric="outputTokens"] .heatmap-card-trend .area           { fill: #c597ff; }
+      .heatmap-card[data-metric="linesChanged"] .heatmap-card-trend path:not(.area) { stroke: #ffb84d; }
+      .heatmap-card[data-metric="linesChanged"] .heatmap-card-trend .area           { fill: #ffb84d; }
+      .heatmap-card[data-metric="cost"]         .heatmap-card-trend path:not(.area) { stroke: #70d99c; }
+      .heatmap-card[data-metric="cost"]         .heatmap-card-trend .area           { fill: #70d99c; }
       /* Per-metric tints — Input=blue, Output=violet, Lines=amber, Cost=green. */
       .heatmap-card[data-metric="inputTokens"]   .heatmap-card-total { color: #69b8ff; }
       .heatmap-card[data-metric="inputTokens"]   .heatmap-cell.lvl-1 { background: rgba(105,184,255,0.18); }
@@ -979,6 +998,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
               <span class="heatmap-card-total" data-total>—</span>
             </div>
             <div class="heatmap-card-grid"></div>
+            <div class="heatmap-card-trend" data-trend></div>
           </div>
           <div class="heatmap-card" data-metric="outputTokens">
             <div class="heatmap-card-head">
@@ -986,6 +1006,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
               <span class="heatmap-card-total" data-total>—</span>
             </div>
             <div class="heatmap-card-grid"></div>
+            <div class="heatmap-card-trend" data-trend></div>
           </div>
           <div class="heatmap-card" data-metric="linesChanged">
             <div class="heatmap-card-head">
@@ -993,6 +1014,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
               <span class="heatmap-card-total" data-total>—</span>
             </div>
             <div class="heatmap-card-grid"></div>
+            <div class="heatmap-card-trend" data-trend></div>
           </div>
           <div class="heatmap-card" data-metric="cost">
             <div class="heatmap-card-head">
@@ -1000,6 +1022,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
               <span class="heatmap-card-total" data-total>—</span>
             </div>
             <div class="heatmap-card-grid"></div>
+            <div class="heatmap-card-trend" data-trend></div>
           </div>
         </div>
 
@@ -1767,9 +1790,11 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       function renderHeatmapCard(card, data) {
         const grid = card.querySelector(".heatmap-card-grid");
         const totalEl = card.querySelector("[data-total]");
+        const trendEl = card.querySelector("[data-trend]");
         if (!data?.dailyValues?.length) {
           grid.innerHTML = "";
           if (totalEl) totalEl.textContent = "—";
+          if (trendEl) trendEl.innerHTML = "";
           return;
         }
         const total = data.dailyValues.reduce((a, b) => a + b, 0);
@@ -1792,6 +1817,34 @@ const tagline = "Self-hosted observatory for your AI coding agents";
           );
         }
         grid.innerHTML = cells.join("");
+        // v0.37.0 — daily trend sparkline under the heatmap. We use the last
+        // 60 days of the 180-day window so the line has visual weight
+        // without compressing the whole half-year into a thin scribble.
+        if (trendEl) trendEl.innerHTML = trendSparklineSvg(data.dailyValues);
+      }
+      // Renders the tail (last `tail`) of a daily-values array as a small
+      // filled area + line SVG. Falls back to empty when there's no signal
+      // so the card doesn't show a flat bottom line for inactive metrics.
+      function trendSparklineSvg(values, tail = 60) {
+        const arr = values.slice(Math.max(0, values.length - tail));
+        const max = Math.max(0, ...arr);
+        if (max <= 0) return "";
+        const w = 260;
+        const h = 22;
+        const step = arr.length > 1 ? w / (arr.length - 1) : 0;
+        const pts = arr.map((v, i) => {
+          const x = i * step;
+          const y = h - (v / max) * (h - 2) - 1;
+          return x.toFixed(1) + "," + y.toFixed(1);
+        });
+        const linePath = "M" + pts.join(" L");
+        const areaPath = linePath + " L" + w.toFixed(1) + "," + h + " L0," + h + " Z";
+        return (
+          '<svg viewBox="0 0 ' + w + " " + h + '" preserveAspectRatio="none">' +
+          '<path class="area" d="' + areaPath + '"/>' +
+          '<path d="' + linePath + '"/>' +
+          "</svg>"
+        );
       }
       async function loadHeatmaps() {
         const cards = Array.from(document.querySelectorAll(".heatmap-card[data-metric]"));
