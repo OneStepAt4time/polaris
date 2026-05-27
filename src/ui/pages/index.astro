@@ -590,6 +590,17 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       .project-card.starred .project-name code { color: var(--accent); }
       /* v0.32.0 — hide button sits to the right of the name. Same visual
          weight as the star so they read as a small action row. */
+      .project-rename {
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        font-size: 0.8rem;
+        line-height: 1;
+        color: var(--fg-dim);
+        padding: 0 0.1rem;
+        margin-left: auto;
+      }
+      .project-rename:hover { color: var(--accent); }
       .project-hide {
         background: transparent;
         border: none;
@@ -598,9 +609,26 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         line-height: 1;
         color: var(--fg-dim);
         padding: 0 0.1rem;
-        margin-left: auto;
       }
       .project-hide:hover { color: var(--danger); }
+      /* v0.34.0 — inline rename input replaces the name span while editing.
+         Same width as the span so the card layout doesn't reshuffle. */
+      .project-rename-input {
+        background: var(--bg);
+        border: 1px solid var(--accent);
+        color: var(--accent);
+        border-radius: 3px;
+        padding: 0.05rem 0.25rem;
+        font-size: 0.8125rem;
+        font-family: inherit;
+        min-width: 0;
+        flex: 1;
+      }
+      .project-alias-orig {
+        font-size: 0.7rem;
+        color: var(--fg-dim);
+        margin-left: 0.4rem;
+      }
       /* Footer with the hidden-projects toggle. Visually quieter than a
          primary action; only appears when at least one project is hidden. */
       .hidden-projects-footer {
@@ -1030,7 +1058,12 @@ const tagline = "Self-hosted observatory for your AI coding agents";
           return;
         }
         banner.hidden = false;
-        $("project-filter-name").textContent = name;
+        // v0.34.0 — show alias when one is set, raw name otherwise. The
+        // tooltip carries the underlying project key either way.
+        const label = displayName(name);
+        const el = $("project-filter-name");
+        el.textContent = label === name ? name : label + " (" + name + ")";
+        el.setAttribute("title", name);
       }
       function projectFilterQuery() {
         const name = getProjectFilter();
@@ -1102,6 +1135,40 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       // scoped (not persisted) — opening hidden every reload would defeat the
       // purpose of hiding.
       let hiddenExpanded = false;
+
+      // v0.34.0 — display-name aliases for projects. The on-disk project key
+      // (e.g. "D--aegis") stays the source of truth for filtering, API
+      // calls, and persistence; the alias is purely a display rewrite so
+      // the user can tidy up Windows-encoded folder names ("D--aegis" →
+      // "Aegis") without touching anything server-side.
+      const ALIAS_KEY = "polaris.projectAliases";
+      function getAliases() {
+        try {
+          const raw = localStorage.getItem(ALIAS_KEY);
+          if (!raw) return {};
+          const obj = JSON.parse(raw);
+          return obj && typeof obj === "object" && !Array.isArray(obj) ? obj : {};
+        } catch {
+          return {};
+        }
+      }
+      function setAlias(name, alias) {
+        const all = getAliases();
+        const trimmed = typeof alias === "string" ? alias.trim() : "";
+        if (trimmed === "" || trimmed === name) {
+          delete all[name];
+        } else {
+          all[name] = trimmed;
+        }
+        localStorage.setItem(ALIAS_KEY, JSON.stringify(all));
+      }
+      function displayName(name) {
+        const all = getAliases();
+        return Object.prototype.hasOwnProperty.call(all, name) ? all[name] : name;
+      }
+      // Project name currently being edited in the rename input. Session-
+      // scoped so a reload always lands on the read-only view.
+      let editingProject = null;
 
       const formatUsd = (n) => {
         if (!Number.isFinite(n) || n <= 0) return "$0";
@@ -1502,13 +1569,29 @@ const tagline = "Self-hosted observatory for your AI coding agents";
           const classes = ["project-card"];
           if (isStarred && !isHidden) classes.push("starred");
           if (isHidden) classes.push("is-hidden");
+          const display = displayName(p.name);
+          const hasAlias = display !== p.name;
+          const isEditing = editingProject === p.name;
+          const nameCell = isEditing
+            ? '<input type="text" class="project-rename-input" data-rename-input="' +
+              escape(p.name) +
+              '" value="' +
+              escape(display) +
+              '" autofocus />'
+            : '<span data-project-filter="' + escape(p.name) + '" title="' +
+              escape(p.name) + '">' + escape(display) + "</span>" +
+              (hasAlias
+                ? '<span class="project-alias-orig">(' + escape(p.name) + ")</span>"
+                : "");
           return (
             '<div class="' + classes.join(" ") + '">' +
             '<div class="project-name">' +
             '<button type="button" class="project-star' + (isStarred ? " is-starred" : "") +
             '" data-star="' + escape(p.name) + '" title="' +
             (isStarred ? "Unstar" : "Star") + '">' + starIcon + "</button>" +
-            '<span data-project-filter="' + escape(p.name) + '">' + escape(p.name) + "</span>" +
+            nameCell +
+            '<button type="button" class="project-rename" data-rename="' + escape(p.name) +
+            '" title="Rename">✎</button>' +
             '<button type="button" class="project-hide" data-hide="' + escape(p.name) +
             '" title="' + hideTitle + '">' + hideIcon + "</button>" +
             "</div>" +
@@ -1592,6 +1675,40 @@ const tagline = "Self-hosted observatory for your AI coding agents";
             hiddenExpanded = !hiddenExpanded;
             if (lastProjectsData) renderProjects(lastProjectsData);
           });
+        }
+        // v0.34.0 — rename buttons + inline editor. Clicking ✎ enters edit
+        // mode; the next render swaps the name span for an <input>. Enter
+        // saves, Esc cancels, blur saves. Empty value unsets the alias.
+        $("projects").querySelectorAll(".project-rename[data-rename]").forEach((btn) => {
+          btn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            const name = btn.getAttribute("data-rename");
+            if (!name) return;
+            editingProject = name;
+            if (lastProjectsData) renderProjects(lastProjectsData);
+          });
+        });
+        const renameInput = $("projects").querySelector(".project-rename-input[data-rename-input]");
+        if (renameInput instanceof HTMLInputElement) {
+          const commit = (save) => {
+            const name = renameInput.getAttribute("data-rename-input") ?? "";
+            if (save) setAlias(name, renameInput.value);
+            editingProject = null;
+            if (lastProjectsData) renderProjects(lastProjectsData);
+          };
+          renameInput.focus();
+          renameInput.select();
+          renameInput.addEventListener("keydown", (ev) => {
+            if (ev.key === "Enter") {
+              ev.preventDefault();
+              commit(true);
+            } else if (ev.key === "Escape") {
+              ev.preventDefault();
+              commit(false);
+            }
+          });
+          renameInput.addEventListener("blur", () => commit(true));
+          renameInput.addEventListener("click", (ev) => ev.stopPropagation());
         }
       }
       // Last successful /v1/projects payload, so toggling a star re-renders
