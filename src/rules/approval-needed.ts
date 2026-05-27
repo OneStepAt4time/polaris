@@ -25,6 +25,16 @@ export function checkApprovalNeeded(cfg: ApprovalNeededConfig): RuleMatch[] {
       ruleName: `${RULE_PREFIX}:${a.sessionId}`,
       dedupKey: a.approvalId,
       message,
+      // v0.35.0 — let inline-capable channels (Telegram) render Allow/Deny
+      // buttons. correlationId encodes both ids so the channel poller can
+      // route the callback without a separate lookup table. optionId values
+      // ("allow_once", "reject_once") mirror what the ACP child uses on
+      // `session/request_permission`.
+      inlineActions: [
+        { id: "allow_once", label: "✓ Allow" },
+        { id: "reject_once", label: "✕ Deny" },
+      ],
+      correlationId: `${a.sessionId}:${a.approvalId}`,
     };
   });
 }

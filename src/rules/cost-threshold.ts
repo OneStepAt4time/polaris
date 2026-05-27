@@ -10,6 +10,18 @@ export interface RuleMatch {
   ruleName: string;
   dedupKey: string;
   message: string;
+  /**
+   * v0.35.0 — optional inline actions surfaced by channels that can render
+   * them (Telegram inline_keyboard). Each action carries its display label
+   * and an id the channel echoes back through callback metadata.
+   */
+  inlineActions?: { id: string; label: string }[];
+  /**
+   * v0.35.0 — opaque id the channel echoes back when the user picks an
+   * action. Polaris uses it to look up the pending approval and call
+   * `SessionManager.respondToApproval`.
+   */
+  correlationId?: string;
 }
 
 const RULE_NAME = "cost-threshold-daily";

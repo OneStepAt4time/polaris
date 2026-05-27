@@ -68,4 +68,38 @@ describe("sendTelegramMessage", () => {
     await sendTelegramMessage({ botToken: "abc:def/ghi", chatId: "1" }, "x", fetch);
     expect(calls[0]?.url).toBe("https://api.telegram.org/botabc%3Adef%2Fghi/sendMessage");
   });
+
+  // v0.35.0 — inline buttons
+  it("attaches reply_markup.inline_keyboard when inlineActions + correlationId are set", async () => {
+    const { calls, fetch } = makeFakeFetch({ ok: true, status: 200 });
+    await sendTelegramMessage({ botToken: "t", chatId: "c" }, "approval needed", fetch, {
+      inlineActions: [
+        { id: "allow_once", label: "✓ Allow" },
+        { id: "reject_once", label: "✕ Deny" },
+      ],
+      correlationId: "sess-A:appr-B",
+    });
+    const body = JSON.parse(calls[0]?.body ?? "{}");
+    expect(body.reply_markup).toEqual({
+      inline_keyboard: [
+        [
+          { text: "✓ Allow", callback_data: "polaris:sess-A:appr-B:allow_once" },
+          { text: "✕ Deny", callback_data: "polaris:sess-A:appr-B:reject_once" },
+        ],
+      ],
+    });
+  });
+
+  it("omits reply_markup when inlineActions is empty or correlationId is missing", async () => {
+    const { calls, fetch } = makeFakeFetch({ ok: true, status: 200 });
+    await sendTelegramMessage({ botToken: "t", chatId: "c" }, "hi", fetch, {
+      inlineActions: [],
+      correlationId: "x",
+    });
+    expect(JSON.parse(calls[0]?.body ?? "{}").reply_markup).toBeUndefined();
+    await sendTelegramMessage({ botToken: "t", chatId: "c" }, "hi", fetch, {
+      inlineActions: [{ id: "x", label: "X" }],
+    });
+    expect(JSON.parse(calls[1]?.body ?? "{}").reply_markup).toBeUndefined();
+  });
 });

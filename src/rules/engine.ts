@@ -63,8 +63,18 @@ async function dispatch(match: RuleMatch, channels: Channel[]): Promise<Dispatch
   if (channels.length === 0) {
     return { ok: false, successes: [], failures: [{ channel: "(none)", error: "no channels" }] };
   }
+  // v0.35.0 — forward inlineActions + correlationId to channels that can
+  // render them. Channels without inline support ignore the options.
+  // exactOptionalPropertyTypes: build the object incrementally so absent
+  // keys stay truly absent (not `undefined`).
+  let opts: import("../channels/channel.js").ChannelMessageOptions | undefined;
+  if (match.inlineActions !== undefined || match.correlationId !== undefined) {
+    opts = {};
+    if (match.inlineActions !== undefined) opts.inlineActions = match.inlineActions;
+    if (match.correlationId !== undefined) opts.correlationId = match.correlationId;
+  }
   const results = await Promise.all(
-    channels.map(async (c) => ({ name: c.name, result: await c.send(match.message) })),
+    channels.map(async (c) => ({ name: c.name, result: await c.send(match.message, opts) })),
   );
   const summary: DispatchSummary = { ok: false, successes: [], failures: [] };
   for (const r of results) {

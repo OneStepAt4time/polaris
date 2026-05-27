@@ -12,6 +12,7 @@ import { registerAuth } from "./auth.js";
 import type { Channel } from "./channels/channel.js";
 import { makeDiscordChannel } from "./channels/discord.js";
 import { makeSlackChannel } from "./channels/slack.js";
+import { type TelegramPollerHandle, startTelegramPoller } from "./channels/telegram-poller.js";
 import { makeTelegramChannel } from "./channels/telegram.js";
 import { makeWebhookChannel } from "./channels/webhook.js";
 import { type Config, loadConfig, parseTelegramEnv } from "./config.js";
@@ -203,9 +204,34 @@ export async function buildServer(): Promise<BuildResult> {
     ratePoller = startRateLimitPoller(db, { credentials }, (msg) => app.log.info(msg));
   }
 
+  // v0.35.0 — Telegram callback_query poller. Routes Allow/Deny taps on
+  // approval-needed messages straight to SessionManager.respondToApproval
+  // without the user having to open the dashboard. Only enabled when the
+  // Telegram bot is configured (the channel itself is already wired
+  // above); reuses the same bot token.
+  let tgPoller: TelegramPollerHandle | null = null;
+  if (tg !== null) {
+    tgPoller = startTelegramPoller(
+      { botToken: tg.botToken },
+      async (payload) => {
+        const mgr = sessionManager;
+        if (!mgr) return { ok: false, message: "Polaris not ready" };
+        const ok = mgr.respondToApproval(payload.sessionId, payload.approvalId, {
+          outcome: "selected",
+          optionId: payload.optionId,
+        });
+        if (!ok) return { ok: false, message: "Approval already handled" };
+        const verb = payload.optionId.startsWith("reject") ? "Denied" : "Allowed";
+        return { ok: true, message: `${verb} by ${payload.fromUser}` };
+      },
+      (msg) => app.log.info(msg),
+    );
+  }
+
   app.addHook("onClose", async () => {
     ratePoller?.stop();
     rulesEngine?.stop();
+    tgPoller?.stop();
     watcher?.close();
     if (sessionManager) await sessionManager.close();
     db.close();
