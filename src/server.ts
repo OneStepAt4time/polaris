@@ -26,7 +26,7 @@ import {
   resolveRange,
 } from "./metrics/aggregator.js";
 import { aggregateHeatmap, isHeatmapMetric } from "./metrics/heatmap.js";
-import { loadPricing } from "./metrics/pricing.js";
+import { type PricingTable, computeCost, loadPricing } from "./metrics/pricing.js";
 import { aggregateByProject } from "./metrics/projects.js";
 import { loadOAuthCredentials } from "./rate-limit/oauth.js";
 import { type PollerHandle, startRateLimitPoller } from "./rate-limit/poller.js";
@@ -75,6 +75,81 @@ export interface BuildResult {
   app: FastifyInstance;
   config: Config;
   db: PolarisDb;
+}
+
+/**
+ * v0.36.0 — build a Map<acpSessionId, { events, costUsd, ... }> by joining
+ * per-session-file aggregates from the events table against the basename of
+ * each session_file. Claude Code's JSONL files are named `{sessionId}.jsonl`,
+ * so the match is just the basename minus the extension. One SQL query,
+ * O(N) JS work — kept light enough to run on every /v1/sessions request.
+ */
+export interface SessionLifetimeStats {
+  events: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  linesAdded: number;
+  linesRemoved: number;
+  costUsd: number;
+}
+export function buildSessionCostMap(
+  db: PolarisDb,
+  pricing: PricingTable,
+): Map<string, SessionLifetimeStats> {
+  const rows = db.aggregateBySessionFile();
+  const out = new Map<string, SessionLifetimeStats>();
+  for (const row of rows) {
+    const base = sessionIdFromFile(row.sessionFile);
+    if (base === null) continue;
+    const recordedCostExact = row.rawCostUsdSum !== null && row.rawCostUsdCount === row.events;
+    const cost = recordedCostExact
+      ? (row.rawCostUsdSum as number)
+      : computeCost(
+          {
+            model: row.model,
+            inputTokens: row.inputTokens,
+            outputTokens: row.outputTokens,
+            cacheReadTokens: row.cacheReadTokens,
+            cacheCreationTokens: row.cacheCreationTokens,
+            rawCostUsd: null,
+          },
+          pricing,
+        );
+    // Accumulate across (session_file, model) rows. Same session id may
+    // appear in multiple rows when a session hops between models.
+    const acc = out.get(base);
+    if (acc === undefined) {
+      out.set(base, {
+        events: row.events,
+        inputTokens: row.inputTokens,
+        outputTokens: row.outputTokens,
+        cacheReadTokens: row.cacheReadTokens,
+        linesAdded: row.linesAdded,
+        linesRemoved: row.linesRemoved,
+        costUsd: cost,
+      });
+    } else {
+      acc.events += row.events;
+      acc.inputTokens += row.inputTokens;
+      acc.outputTokens += row.outputTokens;
+      acc.cacheReadTokens += row.cacheReadTokens;
+      acc.linesAdded += row.linesAdded;
+      acc.linesRemoved += row.linesRemoved;
+      acc.costUsd += cost;
+    }
+  }
+  return out;
+}
+
+/** Extract `{sessionId}` from a `…/{sessionId}.jsonl` path. */
+export function sessionIdFromFile(sessionFile: string): string | null {
+  const normalized = sessionFile.replace(/\\/g, "/");
+  const slash = normalized.lastIndexOf("/");
+  const basename = slash >= 0 ? normalized.slice(slash + 1) : normalized;
+  if (!basename.endsWith(".jsonl")) return null;
+  const stem = basename.slice(0, -".jsonl".length);
+  return stem.length > 0 ? stem : null;
 }
 
 function findUiRoot(): string | null {
@@ -420,7 +495,18 @@ export async function buildServer(): Promise<BuildResult> {
       }
       return session;
     });
-    return reply.send({ sessions: [...live, ...history] });
+    // v0.36.0 — lifetime cost/tokens per session. Match by session_file
+    // basename which Claude Code writes as `{sessionId}.jsonl`. Single SQL
+    // query for the whole list keeps p99 flat regardless of session count.
+    const costsBySession = buildSessionCostMap(db, loadPricing());
+    const enrich = <T extends { id: string }>(s: T): T => {
+      const stats = costsBySession.get(s.id);
+      if (stats !== undefined) (s as unknown as Record<string, unknown>).stats = stats;
+      return s;
+    };
+    const enrichedLive = live.map((s) => enrich({ ...s }));
+    const enrichedHistory = history.map((s) => enrich({ ...s } as unknown as { id: string }));
+    return reply.send({ sessions: [...enrichedLive, ...enrichedHistory] });
   });
 
   app.get<{ Params: { id: string } }>(
