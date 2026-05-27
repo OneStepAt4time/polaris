@@ -175,6 +175,46 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         border-color: var(--accent);
         font-weight: 600;
       }
+      /* v0.31.0 — project-filter banner. Visible only when a project filter
+         is active; clicking ✕ clears the filter and reloads the dashboard. */
+      .project-filter-banner {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        background: rgba(255, 213, 74, 0.08);
+        border: 1px solid rgba(255, 213, 74, 0.4);
+        border-radius: 6px;
+        padding: 0.4rem 0.7rem;
+        margin: 0.5rem 0 1rem;
+        font-size: 0.8rem;
+      }
+      .project-filter-banner code {
+        color: #ffd54a;
+        font-weight: 600;
+        background: transparent;
+        padding: 0;
+      }
+      .project-filter-banner button {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--fg-dim);
+        border-radius: 4px;
+        padding: 0.1rem 0.45rem;
+        cursor: pointer;
+        font-size: 0.75rem;
+        margin-left: auto;
+      }
+      .project-filter-banner button:hover {
+        color: var(--fg);
+        border-color: var(--fg-dim);
+      }
+      /* Make the project name clickable: it sets the filter. */
+      .project-card .project-name > span {
+        cursor: pointer;
+      }
+      .project-card .project-name > span:hover {
+        text-decoration: underline;
+      }
       .error {
         color: var(--danger);
       }
@@ -776,6 +816,11 @@ const tagline = "Self-hosted observatory for your AI coding agents";
           <button data-range="30d">30 days</button>
           <button data-range="all">All</button>
         </div>
+        <div id="project-filter-banner" class="project-filter-banner" hidden>
+          <span class="muted">Filtering by project:</span>
+          <code id="project-filter-name"></code>
+          <button type="button" id="project-filter-clear" title="Clear filter">✕</button>
+        </div>
         <div id="kpis" class="kpis"></div>
         <div id="per-model" class="per-model"></div>
         <p class="muted" id="range-meta"></p>
@@ -860,6 +905,35 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       const setToken = (t) => localStorage.setItem(TOKEN_KEY, t);
       const clearToken = () => localStorage.removeItem(TOKEN_KEY);
 
+      // v0.31.0 — single project filter applied to all /v1/metrics + /v1/heatmap
+      // calls. Persisted in localStorage so it survives reload, mirroring the
+      // CCMeter "drill into one project" navigation.
+      const PROJ_FILTER_KEY = "polaris.projectFilter";
+      const getProjectFilter = () => localStorage.getItem(PROJ_FILTER_KEY);
+      function setProjectFilter(name) {
+        if (name === null || name === undefined || name === "") {
+          localStorage.removeItem(PROJ_FILTER_KEY);
+        } else {
+          localStorage.setItem(PROJ_FILTER_KEY, name);
+        }
+        updateProjectFilterBanner();
+      }
+      function updateProjectFilterBanner() {
+        const name = getProjectFilter();
+        const banner = $("project-filter-banner");
+        if (!banner) return;
+        if (!name) {
+          banner.hidden = true;
+          return;
+        }
+        banner.hidden = false;
+        $("project-filter-name").textContent = name;
+      }
+      function projectFilterQuery() {
+        const name = getProjectFilter();
+        return name ? "&project=" + encodeURIComponent(name) : "";
+      }
+
       // v0.30.0 — starred projects pin to the top of the grid. Persisted in
       // localStorage so the user's choices survive reloads but never leave
       // the browser (matches CCMeter's local-only star concept).
@@ -917,7 +991,17 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         $("auth-pane").hidden = true;
         $("dashboard").hidden = false;
         startSessionsPoll();
+        updateProjectFilterBanner();
       };
+      function reloadDashboard() {
+        const range =
+          document
+            .querySelector(".range-tabs button.active")
+            ?.getAttribute("data-range") ?? "today";
+        loadMetrics(range);
+        loadProjects();
+        loadHeatmaps();
+      }
 
       async function apiFetch(path, init = {}) {
         const res = await fetch(path, {
@@ -938,7 +1022,9 @@ const tagline = "Self-hosted observatory for your AI coding agents";
 
       // ── Metrics tab ──────────────────────────────────────────────────────
       async function fetchMetrics(range) {
-        const res = await apiFetch("/v1/metrics?range=" + encodeURIComponent(range));
+        const res = await apiFetch(
+          "/v1/metrics?range=" + encodeURIComponent(range) + projectFilterQuery(),
+        );
         if (!res.ok) throw new Error("HTTP " + res.status);
         return res.json();
       }
@@ -1213,7 +1299,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
               '<button type="button" class="project-star' + (isStarred ? " is-starred" : "") +
               '" data-star="' + escape(p.name) + '" title="' +
               (isStarred ? "Unstar" : "Star") + '">' + starIcon + "</button>" +
-              "<span>" + escape(p.name) + "</span>" +
+              '<span data-project-filter="' + escape(p.name) + '">' + escape(p.name) + "</span>" +
               "</div>" +
               '<div class="project-row">' +
               '<span class="project-cost">' + formatUsd(p.costUsd) + "</span>" +
@@ -1246,6 +1332,16 @@ const tagline = "Self-hosted observatory for your AI coding agents";
             if (!name) return;
             toggleStarred(name);
             if (lastProjectsData) renderProjects(lastProjectsData);
+          });
+        });
+        // v0.31.0 — click the project name to drill into that single project.
+        $("projects").querySelectorAll("[data-project-filter]").forEach((el) => {
+          el.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            const name = el.getAttribute("data-project-filter");
+            if (!name) return;
+            setProjectFilter(name);
+            reloadDashboard();
           });
         });
       }
@@ -1323,7 +1419,8 @@ const tagline = "Self-hosted observatory for your AI coding agents";
             const metric = card.getAttribute("data-metric");
             try {
               const res = await apiFetch(
-                "/v1/heatmap?days=180&metric=" + encodeURIComponent(metric),
+                "/v1/heatmap?days=180&metric=" + encodeURIComponent(metric) +
+                  projectFilterQuery(),
               );
               if (!res.ok) return { card, data: null };
               return { card, data: await res.json() };
@@ -2149,7 +2246,15 @@ const tagline = "Self-hosted observatory for your AI coding agents";
             .forEach((b) => b.classList.remove("active"));
           btn.classList.add("active");
           loadMetrics(btn.dataset.range);
+          // v0.31.0 — keep heatmaps + projects in sync with the range when
+          // project-filter is set (they all read the same filter).
+          loadHeatmaps();
         });
+      });
+      // v0.31.0 — clear button on the project-filter banner.
+      $("project-filter-clear").addEventListener("click", () => {
+        setProjectFilter(null);
+        reloadDashboard();
       });
       $("logout").addEventListener("click", () => {
         closeEventStream();

@@ -1,5 +1,6 @@
-import type { PolarisDb } from "../db.js";
+import type { EventRow, PolarisDb } from "../db.js";
 import { type PricingTable, computeCost } from "./pricing.js";
+import { projectKey } from "./projects.js";
 
 export interface PerModelMetrics {
   model: string;
@@ -114,13 +115,28 @@ export function resolvePreviousRange(
   return null;
 }
 
+export interface AggregateOptions {
+  /**
+   * v0.31.0: when set, restrict aggregation to events whose `sessionFile`
+   * resolves to this project name (via `projectKey()`). Triggers the
+   * slower JS-side aggregation path; unfiltered queries keep the fast
+   * SQL-pushdown path from v0.24.0.
+   */
+  projectFilter?: string | null;
+}
+
 export function aggregate(
   db: PolarisDb,
   range: string,
   fromMs: number,
   toMs: number,
   pricing: PricingTable,
+  opts: AggregateOptions = {},
 ): MetricsResult {
+  const projectFilter = opts.projectFilter ?? null;
+  if (projectFilter !== null) {
+    return aggregateFiltered(db, range, fromMs, toMs, pricing, projectFilter);
+  }
   // v0.24.0: push SUM/GROUP BY down to SQLite. Returns ~N-models rows
   // (typically 3-7) instead of pulling every event into JS — measured a 15x
   // p99 improvement at 10k events. The per-event computeCost() loop is
@@ -199,6 +215,106 @@ export function aggregate(
     totals,
     perModel,
   };
+}
+
+/**
+ * v0.31.0 — slow path used when a project filter is active. Pulls raw
+ * events, filters by `projectKey(sessionFile) === project`, and rolls up
+ * the same shape that aggregate() produces. Acceptable cost: a project
+ * filter is an explicit user action, not the hot path.
+ */
+function aggregateFiltered(
+  db: PolarisDb,
+  range: string,
+  fromMs: number,
+  toMs: number,
+  pricing: PricingTable,
+  project: string,
+): MetricsResult {
+  const events = db
+    .getEventsInRange(fromMs, toMs)
+    .filter((e) => projectKey(e.sessionFile) === project);
+  const totals: MetricsTotals = {
+    events: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    costUsd: 0,
+    linesAdded: 0,
+    linesRemoved: 0,
+    windowDays: 0,
+    activeDays: 0,
+    streak: 0,
+    avgOutputPerActiveDay: 0,
+  };
+  const byModel = new Map<string, PerModelMetrics>();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const activeDaySet = new Set<number>();
+  let rawCostUsdSum = 0;
+  let rawCostUsdCount = 0;
+  for (const e of events) {
+    const cost = computeCost(e, pricing);
+    if (e.rawCostUsd !== null) {
+      rawCostUsdSum += e.rawCostUsd;
+      rawCostUsdCount += 1;
+    }
+    totals.events += 1;
+    totals.inputTokens += e.inputTokens;
+    totals.outputTokens += e.outputTokens;
+    totals.cacheReadTokens += e.cacheReadTokens;
+    totals.cacheCreationTokens += e.cacheCreationTokens;
+    totals.costUsd += cost;
+    totals.linesAdded += e.linesAdded ?? 0;
+    totals.linesRemoved += e.linesRemoved ?? 0;
+    let m = byModel.get(e.model);
+    if (m === undefined) {
+      m = {
+        model: e.model,
+        events: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        costUsd: 0,
+        linesAdded: 0,
+        linesRemoved: 0,
+      };
+      byModel.set(e.model, m);
+    }
+    m.events += 1;
+    m.inputTokens += e.inputTokens;
+    m.outputTokens += e.outputTokens;
+    m.cacheReadTokens += e.cacheReadTokens;
+    m.cacheCreationTokens += e.cacheCreationTokens;
+    m.costUsd += cost;
+    m.linesAdded += e.linesAdded ?? 0;
+    m.linesRemoved += e.linesRemoved ?? 0;
+    activeDaySet.add(Math.floor(e.tsMs / dayMs) * dayMs);
+  }
+  // Mirror aggregateByModel's raw-cost preference: only if every event in
+  // the window carries a raw_cost_usd, the SUM is authoritative.
+  if (rawCostUsdCount === totals.events && totals.events > 0) totals.costUsd = rawCostUsdSum;
+  const perModel = [...byModel.values()].sort((a, b) => b.costUsd - a.costUsd);
+
+  const activity = computeActivity(
+    [...activeDaySet].sort((a, b) => a - b),
+    fromMs,
+    toMs,
+  );
+  totals.windowDays = activity.windowDays;
+  totals.activeDays = activity.activeDays;
+  totals.streak = activity.streak;
+  totals.avgOutputPerActiveDay =
+    activity.activeDays > 0 ? totals.outputTokens / activity.activeDays : 0;
+
+  return { range, fromMs, toMs, totals, perModel };
+}
+
+// Exported so other modules can reuse the same filter helper without
+// duplicating the projectKey() import.
+export function filterEventsByProject(events: EventRow[], project: string): EventRow[] {
+  return events.filter((e) => projectKey(e.sessionFile) === project);
 }
 
 /**
