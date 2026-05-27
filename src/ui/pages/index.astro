@@ -353,6 +353,21 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         font-size: 0.72rem;
         margin-left: 0.4rem;
       }
+      /* v0.36.0 — lifetime cost + token stats per session, shown right
+         under the header. Same vertical rhythm as the settings badges. */
+      .session-stats {
+        font-size: 0.78rem;
+        margin-top: 0.3rem;
+        font-variant-numeric: tabular-nums;
+      }
+      .session-cost {
+        color: var(--fg);
+        font-weight: 600;
+      }
+      .session-meta {
+        color: var(--fg-dim);
+        margin-left: 0.4rem;
+      }
       .session-settings {
         font-size: 0.7rem;
         color: var(--fg-dim);
@@ -2068,6 +2083,17 @@ const tagline = "Self-hosted observatory for your AI coding agents";
                 escape(s.cwd) +
                 '">Resume</button>'
               : "";
+            // v0.36.0 — lifetime cost + tokens per session.
+            const statsRow = s.stats
+              ? '<div class="session-stats"><span class="session-cost">' +
+                formatUsd(s.stats.costUsd) +
+                "</span>" +
+                ' <span class="session-meta">' +
+                formatTokens(s.stats.inputTokens) + " in · " +
+                formatTokens(s.stats.outputTokens) + " out · " +
+                s.stats.events + " ev" +
+                "</span></div>"
+              : "";
             return (
               '<div class="' +
               cls +
@@ -2080,6 +2106,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
               " · " +
               escape(s.status) +
               "</span></div>" +
+              statsRow +
               settingsBadges(s) +
               resumeBtn +
               "</div>"

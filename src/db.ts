@@ -44,6 +44,26 @@ export interface SessionMessageRow {
   payloadJson: string;
 }
 
+/**
+ * v0.36.0: per-(session-file, model) aggregate. One row per distinct
+ * `(session_file, model)` pair so cost can be priced accurately even for
+ * sessions that hop models. The session card in the UI rolls these up by
+ * matching `sessionFile`'s basename against the ACP session id.
+ */
+export interface PerSessionFileAggregateRow {
+  sessionFile: string;
+  model: string;
+  events: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  linesAdded: number;
+  linesRemoved: number;
+  rawCostUsdSum: number | null;
+  rawCostUsdCount: number;
+}
+
 export interface PerModelAggregateRow {
   model: string;
   events: number;
@@ -72,6 +92,13 @@ export interface PolarisDb {
    * v0.28.0.
    */
   activeDaysInRange(fromMs: number, toMs: number): number[];
+  /**
+   * v0.36.0: per-session-file lifetime aggregate. One row per distinct
+   * `session_file` value with summed tokens, lines, and a marker for
+   * whether all rows in that bucket carry a raw_cost_usd (so the caller
+   * can pick the recorded cost over a recomputed one).
+   */
+  aggregateBySessionFile(): PerSessionFileAggregateRow[];
   wasNotified(ruleName: string, dedupKey: string): boolean;
   markNotified(ruleName: string, dedupKey: string, sentAtMs: number): void;
   insertRateLimitSample(s: RateLimitSample): void;
@@ -201,6 +228,25 @@ export function openDb(path: string): PolarisDb {
      FROM events WHERE ts_ms >= ? AND ts_ms <= ?
      ORDER BY dayStartMs ASC`,
   );
+  // v0.36.0: lifetime per-session-file aggregate. No time-window filter — the
+  // session card wants the running total since the session started. Cheap
+  // because session_file is indexed and the GROUP BY hits at most one row
+  // per active or historical session.
+  const aggBySessionFileStmt = db.prepare(
+    `SELECT session_file AS sessionFile,
+            model,
+            COUNT(*) AS events,
+            COALESCE(SUM(input_tokens), 0) AS inputTokens,
+            COALESCE(SUM(output_tokens), 0) AS outputTokens,
+            COALESCE(SUM(cache_read_tokens), 0) AS cacheReadTokens,
+            COALESCE(SUM(cache_creation_tokens), 0) AS cacheCreationTokens,
+            COALESCE(SUM(lines_added), 0) AS linesAdded,
+            COALESCE(SUM(lines_removed), 0) AS linesRemoved,
+            SUM(raw_cost_usd) AS rawCostUsdSum,
+            COUNT(raw_cost_usd) AS rawCostUsdCount
+     FROM events
+     GROUP BY session_file, model`,
+  );
   const notifyExistsStmt = db.prepare(
     "SELECT 1 FROM notifications_sent WHERE rule_name = ? AND dedup_key = ? LIMIT 1",
   );
@@ -273,6 +319,9 @@ export function openDb(path: string): PolarisDb {
     activeDaysInRange: (fromMs: number, toMs: number): number[] => {
       const rows = activeDaysStmt.all(fromMs, toMs) as { dayStartMs: number }[];
       return rows.map((r) => r.dayStartMs);
+    },
+    aggregateBySessionFile: (): PerSessionFileAggregateRow[] => {
+      return aggBySessionFileStmt.all() as PerSessionFileAggregateRow[];
     },
     wasNotified: (ruleName: string, dedupKey: string): boolean => {
       return notifyExistsStmt.get(ruleName, dedupKey) !== undefined;
