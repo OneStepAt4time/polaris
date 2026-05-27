@@ -68,4 +68,55 @@ describe("sendTelegramMessage", () => {
     await sendTelegramMessage({ botToken: "abc:def/ghi", chatId: "1" }, "x", fetch);
     expect(calls[0]?.url).toBe("https://api.telegram.org/botabc%3Adef%2Fghi/sendMessage");
   });
+
+  // v0.35.0 — inline buttons
+  it("attaches reply_markup.inline_keyboard when inlineActions + correlationId are set", async () => {
+    const { calls, fetch } = makeFakeFetch({ ok: true, status: 200 });
+    await sendTelegramMessage({ botToken: "t", chatId: "c" }, "approval needed", fetch, {
+      inlineActions: [
+        { id: "allow_once", label: "✓ Allow" },
+        { id: "reject_once", label: "✕ Deny" },
+      ],
+      correlationId: "sessA-short:apprB-short",
+    });
+    const body = JSON.parse(calls[0]?.body ?? "{}");
+    expect(body.reply_markup).toEqual({
+      inline_keyboard: [
+        [
+          { text: "✓ Allow", callback_data: "polaris:sessA-short:apprB-short:allow_once" },
+          { text: "✕ Deny", callback_data: "polaris:sessA-short:apprB-short:reject_once" },
+        ],
+      ],
+    });
+  });
+
+  // v0.35.0 — Telegram caps callback_data at 64 bytes. Two full v4 UUIDs
+  // (36 chars each) would overflow, so each id is truncated to 16 chars.
+  it("truncates each correlationId half to 16 chars to stay under the 64-byte cap", async () => {
+    const { calls, fetch } = makeFakeFetch({ ok: true, status: 200 });
+    const sessionId = "b9c1ce92-1b1f-4f3e-aa17-1f44c4f7c0a4";
+    const approvalId = "5b54a7a7-7b3a-4d1c-9e26-3b1b6e0c9b09";
+    await sendTelegramMessage({ botToken: "t", chatId: "c" }, "approval needed", fetch, {
+      inlineActions: [{ id: "allow_once", label: "✓ Allow" }],
+      correlationId: `${sessionId}:${approvalId}`,
+    });
+    const body = JSON.parse(calls[0]?.body ?? "{}");
+    const cb = body.reply_markup.inline_keyboard[0][0].callback_data;
+    expect(cb).toBe(`polaris:${sessionId.slice(0, 16)}:${approvalId.slice(0, 16)}:allow_once`);
+    // Sanity: under Telegram's 64-byte cap.
+    expect(cb.length).toBeLessThanOrEqual(64);
+  });
+
+  it("omits reply_markup when inlineActions is empty or correlationId is missing", async () => {
+    const { calls, fetch } = makeFakeFetch({ ok: true, status: 200 });
+    await sendTelegramMessage({ botToken: "t", chatId: "c" }, "hi", fetch, {
+      inlineActions: [],
+      correlationId: "x",
+    });
+    expect(JSON.parse(calls[0]?.body ?? "{}").reply_markup).toBeUndefined();
+    await sendTelegramMessage({ botToken: "t", chatId: "c" }, "hi", fetch, {
+      inlineActions: [{ id: "x", label: "X" }],
+    });
+    expect(JSON.parse(calls[1]?.body ?? "{}").reply_markup).toBeUndefined();
+  });
 });

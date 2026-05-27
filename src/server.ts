@@ -12,6 +12,7 @@ import { registerAuth } from "./auth.js";
 import type { Channel } from "./channels/channel.js";
 import { makeDiscordChannel } from "./channels/discord.js";
 import { makeSlackChannel } from "./channels/slack.js";
+import { type TelegramPollerHandle, startTelegramPoller } from "./channels/telegram-poller.js";
 import { makeTelegramChannel } from "./channels/telegram.js";
 import { makeWebhookChannel } from "./channels/webhook.js";
 import { type Config, loadConfig, parseTelegramEnv } from "./config.js";
@@ -203,9 +204,44 @@ export async function buildServer(): Promise<BuildResult> {
     ratePoller = startRateLimitPoller(db, { credentials }, (msg) => app.log.info(msg));
   }
 
+  // v0.35.0 — Telegram callback_query poller. Routes Allow/Deny taps on
+  // approval-needed messages straight to SessionManager.respondToApproval
+  // without the user having to open the dashboard. Only enabled when the
+  // Telegram bot is configured (the channel itself is already wired
+  // above); reuses the same bot token.
+  //
+  // Telegram caps callback_data at 64 bytes, so the channel sends only
+  // the first 16 chars of each id. We resolve the truncated prefixes
+  // back to the live ids by scanning SessionManager state.
+  let tgPoller: TelegramPollerHandle | null = null;
+  if (tg !== null) {
+    tgPoller = startTelegramPoller(
+      { botToken: tg.botToken },
+      async (payload) => {
+        const mgr = sessionManager;
+        if (!mgr) return { ok: false, message: "Polaris not ready" };
+        const session = mgr.listSessions().find((s) => s.id.startsWith(payload.sessionId));
+        if (!session) return { ok: false, message: "Session no longer active" };
+        const approval = mgr
+          .listApprovals(session.id)
+          .find((a) => a.approvalId.startsWith(payload.approvalId));
+        if (!approval) return { ok: false, message: "Approval already handled or expired" };
+        const ok = mgr.respondToApproval(session.id, approval.approvalId, {
+          outcome: "selected",
+          optionId: payload.optionId,
+        });
+        if (!ok) return { ok: false, message: "Approval already handled" };
+        const verb = payload.optionId.startsWith("reject") ? "Denied" : "Allowed";
+        return { ok: true, message: `${verb} by ${payload.fromUser}` };
+      },
+      (msg) => app.log.info(msg),
+    );
+  }
+
   app.addHook("onClose", async () => {
     ratePoller?.stop();
     rulesEngine?.stop();
+    tgPoller?.stop();
     watcher?.close();
     if (sessionManager) await sessionManager.close();
     db.close();

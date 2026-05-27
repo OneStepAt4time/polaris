@@ -102,6 +102,13 @@ describe("evaluateRules", () => {
     expect(matches[0]?.ruleName).toMatch(/^approval-needed:/);
     expect(matches[0]?.message).toContain("Bash");
     expect(matches[1]?.dedupKey).toBe("ap-002");
+    // v0.35.0 — Allow/Deny inline actions for inline-capable channels.
+    expect(matches[0]?.inlineActions).toEqual([
+      { id: "allow_once", label: "✓ Allow" },
+      { id: "reject_once", label: "✕ Deny" },
+    ]);
+    expect(matches[0]?.correlationId).toBe("aaaa-bbbb-cccc:ap-001");
+    expect(matches[1]?.correlationId).toBe("dddd-eeee-ffff:ap-002");
   });
 
   it("approval-needed: dedup suppresses the same approvalId on second tick", async () => {
