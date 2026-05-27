@@ -5,15 +5,20 @@
  * dispatches it to the supplied handler so SessionManager can respond to
  * the pending approval.
  *
+ * v0.38.0 — after the handler resolves, the poller also calls
+ * `editMessageText` so the original message strikes the buttons and
+ * shows "✓ Allowed by @user at HH:MM" (or the failure reason). This
+ * prevents accidental double-taps and gives the user feedback in the
+ * thread, not just as a toast.
+ *
  * Polling rather than webhook because:
  *   - no public URL needed (self-hosted MVP),
  *   - no need to coexist with an existing webhook the user may have set,
  *   - simpler error handling — we just retry on the next tick.
  *
  * The callback_data format set by `telegram.ts` is
- * `polaris:{correlationId}:{actionId}`, where correlationId itself is
- * `{sessionId}:{approvalId}`. We split on `:` carefully because both
- * UUIDs are 36 chars and contain no `:`.
+ * `polaris:{sessionPrefix}:{approvalPrefix}:{optionId}` (both ids are
+ * truncated to 16 chars to fit Telegram's 64-byte callback_data cap).
  */
 
 export interface TelegramCallbackPayload {
@@ -54,6 +59,11 @@ interface TgUpdate {
     id: string;
     from?: { username?: string; first_name?: string };
     data?: string;
+    message?: {
+      message_id?: number;
+      chat?: { id?: number };
+      text?: string;
+    };
   };
 }
 
@@ -97,6 +107,20 @@ export function startTelegramPoller(
         try {
           const out = await handler({ ...parsed, callbackQueryId: cb.id, fromUser });
           await answerCallbackQuery(base, cb.id, out.message ?? (out.ok ? "Done" : "Failed"));
+          // v0.38.0 — also edit the original message so the buttons go
+          // away and the result is visible in-thread. Best-effort; if
+          // Telegram refuses the edit we still acked above.
+          const chatId = cb.message?.chat?.id;
+          const messageId = cb.message?.message_id;
+          const originalText = cb.message?.text ?? "";
+          if (typeof chatId === "number" && typeof messageId === "number") {
+            await editMessageText(
+              base,
+              chatId,
+              messageId,
+              buildResolvedMessage(originalText, out, fromUser),
+            );
+          }
           log(
             `[telegram-poller] approval ${parsed.approvalId.slice(0, 12)} → ${parsed.optionId} by ${fromUser} (ok=${out.ok})`,
           );
@@ -153,6 +177,24 @@ export function parseCallbackData(raw: string): {
   return { sessionId, approvalId, optionId };
 }
 
+/**
+ * v0.38.0 — appends a result footer to the original message text. Strips
+ * the Polaris-style first-line header so the resolved view is "Original
+ * body\n\n_<verb> by @user at HH:MM_".
+ */
+export function buildResolvedMessage(
+  originalText: string,
+  result: { ok: boolean; message?: string },
+  fromUser: string,
+): string {
+  const hhmm = new Date().toISOString().slice(11, 16);
+  const verb = result.ok
+    ? (result.message ?? "Resolved")
+    : `Failed: ${result.message ?? "unknown"}`;
+  const footer = `\n\n_${verb} at ${hhmm} UTC_`;
+  return originalText.length > 0 ? originalText + footer : verb;
+}
+
 async function answerCallbackQuery(base: string, id: string, text: string): Promise<void> {
   try {
     await fetch(`${base}/answerCallbackQuery`, {
@@ -163,6 +205,31 @@ async function answerCallbackQuery(base: string, id: string, text: string): Prom
   } catch {
     // Best-effort ack — if Telegram refuses we already responded to the
     // approval, so the next tick is the only fallback we need.
+  }
+}
+
+async function editMessageText(
+  base: string,
+  chatId: number,
+  messageId: number,
+  newText: string,
+): Promise<void> {
+  try {
+    await fetch(`${base}/editMessageText`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+        text: newText,
+        parse_mode: "Markdown",
+        disable_web_page_preview: true,
+        // Empty reply_markup strips the inline_keyboard.
+        reply_markup: { inline_keyboard: [] },
+      }),
+    });
+  } catch {
+    // Best-effort — the answerCallbackQuery toast still informs the user.
   }
 }
 

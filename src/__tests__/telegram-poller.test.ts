@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCallbackData } from "../channels/telegram-poller.js";
+import { buildResolvedMessage, parseCallbackData } from "../channels/telegram-poller.js";
 
 describe("parseCallbackData (v0.35.0)", () => {
   it("parses the canonical polaris:{sessionId}:{approvalId}:{optionId} format", () => {
@@ -33,5 +33,36 @@ describe("parseCallbackData (v0.35.0)", () => {
     expect(parseCallbackData("polaris:sess::allow")).toBeNull();
     expect(parseCallbackData("polaris:sess:appr:")).toBeNull();
     expect(parseCallbackData("polaris:sess:appr")).toBeNull(); // missing optionId entirely
+  });
+});
+
+describe("buildResolvedMessage (v0.38.0)", () => {
+  it("appends a Markdown italic footer with the result + UTC HH:MM", () => {
+    const out = buildResolvedMessage(
+      "*Polaris* — approval needed\n\nSession: `abc`",
+      { ok: true, message: "Allowed by @ema" },
+      "@ema",
+    );
+    expect(out.startsWith("*Polaris* — approval needed\n\nSession: `abc`\n\n_")).toBe(true);
+    expect(out).toMatch(/_Allowed by @ema at \d{2}:\d{2} UTC_$/);
+  });
+
+  it("uses 'Failed: <reason>' when the handler reported ok=false", () => {
+    const out = buildResolvedMessage(
+      "original",
+      { ok: false, message: "Approval already handled" },
+      "@ema",
+    );
+    expect(out).toMatch(/_Failed: Approval already handled at \d{2}:\d{2} UTC_$/);
+  });
+
+  it("falls back to 'Resolved' when ok=true and no message is provided", () => {
+    const out = buildResolvedMessage("body", { ok: true }, "@ema");
+    expect(out).toMatch(/_Resolved at \d{2}:\d{2} UTC_$/);
+  });
+
+  it("handles an empty original message (no leading newlines)", () => {
+    const out = buildResolvedMessage("", { ok: true, message: "Done" }, "@ema");
+    expect(out).toBe("Done");
   });
 });
