@@ -464,11 +464,29 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         display: grid;
         gap: 0.45rem;
       }
+      /* v0.30.0 — starred cards get a subtle accent ring so the pinned
+         group is recognizable at a glance even while scrolling. */
+      .project-card.starred { border-color: var(--accent); }
       .project-name {
         font-size: 0.8125rem;
         color: var(--accent);
         word-break: break-all;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
       }
+      .project-star {
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        font-size: 0.95rem;
+        line-height: 1;
+        color: var(--fg-dim);
+        padding: 0 0.1rem;
+      }
+      .project-star:hover { color: var(--accent); }
+      .project-star.is-starred { color: #ffd54a; }
+      .project-card.starred .project-name code { color: var(--accent); }
       .project-row {
         display: flex;
         justify-content: space-between;
@@ -842,6 +860,31 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       const setToken = (t) => localStorage.setItem(TOKEN_KEY, t);
       const clearToken = () => localStorage.removeItem(TOKEN_KEY);
 
+      // v0.30.0 — starred projects pin to the top of the grid. Persisted in
+      // localStorage so the user's choices survive reloads but never leave
+      // the browser (matches CCMeter's local-only star concept).
+      const STARRED_KEY = "polaris.starredProjects";
+      function getStarred() {
+        try {
+          const raw = localStorage.getItem(STARRED_KEY);
+          if (!raw) return new Set();
+          const arr = JSON.parse(raw);
+          return new Set(Array.isArray(arr) ? arr : []);
+        } catch {
+          return new Set();
+        }
+      }
+      function setStarred(set) {
+        localStorage.setItem(STARRED_KEY, JSON.stringify([...set]));
+      }
+      function toggleStarred(name) {
+        const set = getStarred();
+        if (set.has(name)) set.delete(name);
+        else set.add(name);
+        setStarred(set);
+        return set;
+      }
+
       const formatUsd = (n) => {
         if (!Number.isFinite(n) || n <= 0) return "$0";
         if (n >= 1000) return "$" + (n / 1000).toFixed(1) + "K";
@@ -1136,12 +1179,23 @@ const tagline = "Self-hosted observatory for your AI coding agents";
           $("projects").innerHTML = '<p class="muted">No project data in the last 30 days.</p>';
           return;
         }
-        $("projects").innerHTML = data.projects
+        // v0.30.0 — starred projects come first, then unstarred. Within each
+        // group the existing cost-desc order coming from the API is preserved.
+        const starred = getStarred();
+        const ordered = data.projects.slice().sort((a, b) => {
+          const aStar = starred.has(a.name);
+          const bStar = starred.has(b.name);
+          if (aStar !== bStar) return aStar ? -1 : 1;
+          return (b.costUsd ?? 0) - (a.costUsd ?? 0);
+        });
+        $("projects").innerHTML = ordered
           .map((p) => {
             const tpl = p.outputPerLine ?? 0;
             const eff = efficiencyTier(tpl);
             const linesAdded = p.linesAdded ?? 0;
             const linesRemoved = p.linesRemoved ?? 0;
+            const isStarred = starred.has(p.name);
+            const starIcon = isStarred ? "★" : "☆";
             const linesRow =
               linesAdded > 0 || linesRemoved > 0
                 ? '<div class="project-row project-lines">' +
@@ -1154,8 +1208,13 @@ const tagline = "Self-hosted observatory for your AI coding agents";
                   p.sessions + " sess · " + p.events + " ev</span></div>";
             const tplLabel = tpl > 0 ? Math.round(tpl) + " tok/ln" : "no lines yet";
             return (
-              '<div class="project-card">' +
-              '<div class="project-name">' + escape(p.name) + "</div>" +
+              '<div class="project-card' + (isStarred ? " starred" : "") + '">' +
+              '<div class="project-name">' +
+              '<button type="button" class="project-star' + (isStarred ? " is-starred" : "") +
+              '" data-star="' + escape(p.name) + '" title="' +
+              (isStarred ? "Unstar" : "Star") + '">' + starIcon + "</button>" +
+              "<span>" + escape(p.name) + "</span>" +
+              "</div>" +
               '<div class="project-row">' +
               '<span class="project-cost">' + formatUsd(p.costUsd) + "</span>" +
               '<span class="project-meta">⏱ ' +
@@ -1178,10 +1237,26 @@ const tagline = "Self-hosted observatory for your AI coding agents";
             );
           })
           .join("");
+        // v0.30.0 — wire the star toggle. One delegated listener per render
+        // is cheaper than per-card listeners and keeps the markup clean.
+        $("projects").querySelectorAll(".project-star[data-star]").forEach((btn) => {
+          btn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            const name = btn.getAttribute("data-star");
+            if (!name) return;
+            toggleStarred(name);
+            if (lastProjectsData) renderProjects(lastProjectsData);
+          });
+        });
       }
+      // Last successful /v1/projects payload, so toggling a star re-renders
+      // without hitting the network.
+      let lastProjectsData = null;
       async function loadProjects() {
         try {
-          renderProjects(await fetchProjects(30));
+          const data = await fetchProjects(30);
+          lastProjectsData = data;
+          renderProjects(data);
         } catch (e) {
           $("projects").innerHTML =
             '<div class="error">Failed to load projects: ' + escape(e.message) + "</div>";
