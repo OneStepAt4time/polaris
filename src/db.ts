@@ -66,6 +66,12 @@ export interface PolarisDb {
    * down to SQLite so the hot path returns ~5 rows instead of 10k. v0.24.0.
    */
   aggregateByModel(fromMs: number, toMs: number): PerModelAggregateRow[];
+  /**
+   * Returns one row per UTC day in [fromMs, toMs] that has at least one
+   * event. Used to compute activeDays + streak without pulling raw events.
+   * v0.28.0.
+   */
+  activeDaysInRange(fromMs: number, toMs: number): number[];
   wasNotified(ruleName: string, dedupKey: string): boolean;
   markNotified(ruleName: string, dedupKey: string, sentAtMs: number): void;
   insertRateLimitSample(s: RateLimitSample): void;
@@ -186,6 +192,15 @@ export function openDb(path: string): PolarisDb {
      FROM events WHERE ts_ms >= ? AND ts_ms <= ?
      GROUP BY model`,
   );
+  // v0.28.0: one row per UTC day with any activity. The bucket key is the
+  // ms-since-epoch of UTC midnight (ts_ms / 86_400_000 * 86_400_000). Used
+  // to compute activeDays + streak in O(days) instead of O(events).
+  const DAY_MS = 86_400_000;
+  const activeDaysStmt = db.prepare(
+    `SELECT DISTINCT (ts_ms / ${DAY_MS}) * ${DAY_MS} AS dayStartMs
+     FROM events WHERE ts_ms >= ? AND ts_ms <= ?
+     ORDER BY dayStartMs ASC`,
+  );
   const notifyExistsStmt = db.prepare(
     "SELECT 1 FROM notifications_sent WHERE rule_name = ? AND dedup_key = ? LIMIT 1",
   );
@@ -254,6 +269,10 @@ export function openDb(path: string): PolarisDb {
     },
     aggregateByModel: (fromMs: number, toMs: number): PerModelAggregateRow[] => {
       return aggByModelStmt.all(fromMs, toMs) as PerModelAggregateRow[];
+    },
+    activeDaysInRange: (fromMs: number, toMs: number): number[] => {
+      const rows = activeDaysStmt.all(fromMs, toMs) as { dayStartMs: number }[];
+      return rows.map((r) => r.dayStartMs);
     },
     wasNotified: (ruleName: string, dedupKey: string): boolean => {
       return notifyExistsStmt.get(ruleName, dedupKey) !== undefined;

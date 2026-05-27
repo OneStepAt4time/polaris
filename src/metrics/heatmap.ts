@@ -1,7 +1,16 @@
 import type { PolarisDb } from "../db.js";
 import { type PricingTable, computeCost } from "./pricing.js";
 
-export type HeatmapMetric = "cost" | "events" | "outputTokens" | "sessions";
+// v0.28.0: added "inputTokens" and "linesChanged" so the dashboard can show
+// the same four heatmaps as CCMeter (Input / Output / Lines / Cost).
+// "events" and "sessions" stay supported for back-compat.
+export type HeatmapMetric =
+  | "cost"
+  | "events"
+  | "inputTokens"
+  | "outputTokens"
+  | "linesChanged"
+  | "sessions";
 
 export interface HeatmapResult {
   days: number;
@@ -16,7 +25,14 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_DAYS = 180;
 const MAX_DAYS = 365;
 
-const METRICS: ReadonlySet<HeatmapMetric> = new Set(["cost", "events", "outputTokens", "sessions"]);
+const METRICS: ReadonlySet<HeatmapMetric> = new Set([
+  "cost",
+  "events",
+  "inputTokens",
+  "outputTokens",
+  "linesChanged",
+  "sessions",
+]);
 
 export function isHeatmapMetric(value: string): value is HeatmapMetric {
   return METRICS.has(value as HeatmapMetric);
@@ -45,8 +61,13 @@ export function aggregateHeatmap(
       dailyValues[dayIdx] = (dailyValues[dayIdx] ?? 0) + computeCost(event, pricing);
     } else if (metric === "events") {
       dailyValues[dayIdx] = (dailyValues[dayIdx] ?? 0) + 1;
+    } else if (metric === "inputTokens") {
+      dailyValues[dayIdx] = (dailyValues[dayIdx] ?? 0) + event.inputTokens;
     } else if (metric === "outputTokens") {
       dailyValues[dayIdx] = (dailyValues[dayIdx] ?? 0) + event.outputTokens;
+    } else if (metric === "linesChanged") {
+      dailyValues[dayIdx] =
+        (dailyValues[dayIdx] ?? 0) + (event.linesAdded ?? 0) + (event.linesRemoved ?? 0);
     } else if (metric === "sessions") {
       let set = sessionsPerDay.get(dayIdx);
       if (set === undefined) {

@@ -26,6 +26,20 @@ export interface MetricsTotals {
   linesAdded: number;
   /** Lines removed by tool calls in this window. v0.23.0. */
   linesRemoved: number;
+  /** Total whole UTC days the window spans (≥1). v0.28.0. */
+  windowDays: number;
+  /** Distinct UTC days with at least one event. v0.28.0. */
+  activeDays: number;
+  /**
+   * Consecutive active days ending at the latest UTC day in the window.
+   * 0 when the latest day has no activity. v0.28.0.
+   */
+  streak: number;
+  /**
+   * Output tokens divided by activeDays (0 if no active days). Mirrors
+   * CCMeter's "Avg/day" KPI. v0.28.0.
+   */
+  avgOutputPerActiveDay: number;
 }
 
 export interface PreviousPeriod {
@@ -122,6 +136,10 @@ export function aggregate(
     costUsd: 0,
     linesAdded: 0,
     linesRemoved: 0,
+    windowDays: 0,
+    activeDays: 0,
+    streak: 0,
+    avgOutputPerActiveDay: 0,
   };
   const perModel: PerModelMetrics[] = [];
 
@@ -166,6 +184,14 @@ export function aggregate(
   }
   perModel.sort((a, b) => b.costUsd - a.costUsd);
 
+  // v0.28.0 — activity KPIs (Streak / Active days / Avg per active day).
+  const activity = computeActivity(db.activeDaysInRange(fromMs, toMs), fromMs, toMs);
+  totals.windowDays = activity.windowDays;
+  totals.activeDays = activity.activeDays;
+  totals.streak = activity.streak;
+  totals.avgOutputPerActiveDay =
+    activity.activeDays > 0 ? totals.outputTokens / activity.activeDays : 0;
+
   return {
     range,
     fromMs,
@@ -173,4 +199,35 @@ export function aggregate(
     totals,
     perModel,
   };
+}
+
+/**
+ * Computes window length + active days + current streak from the sorted
+ * list of UTC-midnight day-start timestamps returned by db.activeDaysInRange.
+ *
+ * - `windowDays`: number of whole UTC days [fromMs, toMs] touches (min 1).
+ * - `activeDays`: count of distinct UTC days with at least one event.
+ * - `streak`: consecutive active days ending at the latest UTC day in the
+ *   window. If that latest day is not in `activeDayStarts`, returns 0.
+ *
+ * Exported for unit tests.
+ */
+export function computeActivity(
+  activeDayStarts: number[],
+  fromMs: number,
+  toMs: number,
+): { windowDays: number; activeDays: number; streak: number } {
+  const dayMs = 24 * 60 * 60 * 1000;
+  const fromDay = Math.floor(fromMs / dayMs) * dayMs;
+  const toDay = Math.floor(toMs / dayMs) * dayMs;
+  const windowDays = Math.max(1, Math.round((toDay - fromDay) / dayMs) + 1);
+  if (activeDayStarts.length === 0) return { windowDays, activeDays: 0, streak: 0 };
+  const set = new Set(activeDayStarts);
+  let streak = 0;
+  let cursor = toDay;
+  while (cursor >= fromDay && set.has(cursor)) {
+    streak += 1;
+    cursor -= dayMs;
+  }
+  return { windowDays, activeDays: set.size, streak };
 }

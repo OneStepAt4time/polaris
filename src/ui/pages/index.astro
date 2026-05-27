@@ -595,6 +595,75 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       .heatmap-cell.lvl-3 { background: rgba(255, 213, 74, 0.62); }
       .heatmap-cell.lvl-4 { background: rgba(255, 213, 74, 0.95); }
       .heatmap-cell.empty { background: rgba(255, 255, 255, 0.04); }
+
+      /* v0.28.0 — CCMeter-style 4-up heatmap row. Each card uses its own
+         accent so Input/Output/Lines/Cost are distinguishable at a glance. */
+      .heatmap-quad {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0.6rem;
+        margin: 0.5rem 0 1rem;
+      }
+      @media (max-width: 1100px) {
+        .heatmap-quad { grid-template-columns: repeat(2, 1fr); }
+      }
+      @media (max-width: 600px) {
+        .heatmap-quad { grid-template-columns: 1fr; }
+      }
+      .heatmap-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 0.5rem 0.6rem 0.6rem;
+        overflow-x: auto;
+      }
+      .heatmap-card-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 0.5rem;
+        margin-bottom: 0.4rem;
+      }
+      .heatmap-card-title {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--fg-dim);
+      }
+      .heatmap-card-total {
+        font-size: 0.95rem;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+      .heatmap-card-grid {
+        display: grid;
+        grid-template-rows: repeat(7, 1fr);
+        grid-auto-flow: column;
+        grid-auto-columns: 9px;
+        gap: 2px;
+      }
+      .heatmap-card-grid .heatmap-cell { width: 9px; height: 9px; }
+      /* Per-metric tints — Input=blue, Output=violet, Lines=amber, Cost=green. */
+      .heatmap-card[data-metric="inputTokens"]   .heatmap-card-total { color: #69b8ff; }
+      .heatmap-card[data-metric="inputTokens"]   .heatmap-cell.lvl-1 { background: rgba(105,184,255,0.18); }
+      .heatmap-card[data-metric="inputTokens"]   .heatmap-cell.lvl-2 { background: rgba(105,184,255,0.38); }
+      .heatmap-card[data-metric="inputTokens"]   .heatmap-cell.lvl-3 { background: rgba(105,184,255,0.62); }
+      .heatmap-card[data-metric="inputTokens"]   .heatmap-cell.lvl-4 { background: rgba(105,184,255,0.95); }
+      .heatmap-card[data-metric="outputTokens"]  .heatmap-card-total { color: #c597ff; }
+      .heatmap-card[data-metric="outputTokens"]  .heatmap-cell.lvl-1 { background: rgba(197,151,255,0.18); }
+      .heatmap-card[data-metric="outputTokens"]  .heatmap-cell.lvl-2 { background: rgba(197,151,255,0.38); }
+      .heatmap-card[data-metric="outputTokens"]  .heatmap-cell.lvl-3 { background: rgba(197,151,255,0.62); }
+      .heatmap-card[data-metric="outputTokens"]  .heatmap-cell.lvl-4 { background: rgba(197,151,255,0.95); }
+      .heatmap-card[data-metric="linesChanged"]  .heatmap-card-total { color: #ffb84d; }
+      .heatmap-card[data-metric="linesChanged"]  .heatmap-cell.lvl-1 { background: rgba(255,184,77,0.18); }
+      .heatmap-card[data-metric="linesChanged"]  .heatmap-cell.lvl-2 { background: rgba(255,184,77,0.38); }
+      .heatmap-card[data-metric="linesChanged"]  .heatmap-cell.lvl-3 { background: rgba(255,184,77,0.62); }
+      .heatmap-card[data-metric="linesChanged"]  .heatmap-cell.lvl-4 { background: rgba(255,184,77,0.95); }
+      .heatmap-card[data-metric="cost"]          .heatmap-card-total { color: #70d99c; }
+      .heatmap-card[data-metric="cost"]          .heatmap-cell.lvl-1 { background: rgba(112,217,156,0.18); }
+      .heatmap-card[data-metric="cost"]          .heatmap-cell.lvl-2 { background: rgba(112,217,156,0.38); }
+      .heatmap-card[data-metric="cost"]          .heatmap-cell.lvl-3 { background: rgba(112,217,156,0.62); }
+      .heatmap-card[data-metric="cost"]          .heatmap-cell.lvl-4 { background: rgba(112,217,156,0.95); }
       .heatmap-legend {
         display: flex;
         gap: 0.4rem;
@@ -652,14 +721,37 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         <div id="per-model" class="per-model"></div>
         <p class="muted" id="range-meta"></p>
 
-        <h2>Activity heatmap (last 180 days)</h2>
-        <div class="heatmap-tabs" role="tablist">
-          <button data-heatmap-metric="cost" class="active">Cost</button>
-          <button data-heatmap-metric="events">Events</button>
-          <button data-heatmap-metric="outputTokens">Output tokens</button>
-          <button data-heatmap-metric="sessions">Sessions</button>
+        <h2>Activity (last 180 days)</h2>
+        <div class="heatmap-quad">
+          <div class="heatmap-card" data-metric="inputTokens">
+            <div class="heatmap-card-head">
+              <span class="heatmap-card-title">Input</span>
+              <span class="heatmap-card-total" data-total>—</span>
+            </div>
+            <div class="heatmap-card-grid"></div>
+          </div>
+          <div class="heatmap-card" data-metric="outputTokens">
+            <div class="heatmap-card-head">
+              <span class="heatmap-card-title">Output</span>
+              <span class="heatmap-card-total" data-total>—</span>
+            </div>
+            <div class="heatmap-card-grid"></div>
+          </div>
+          <div class="heatmap-card" data-metric="linesChanged">
+            <div class="heatmap-card-head">
+              <span class="heatmap-card-title">Lines</span>
+              <span class="heatmap-card-total" data-total>—</span>
+            </div>
+            <div class="heatmap-card-grid"></div>
+          </div>
+          <div class="heatmap-card" data-metric="cost">
+            <div class="heatmap-card-head">
+              <span class="heatmap-card-title">Cost</span>
+              <span class="heatmap-card-total" data-total>—</span>
+            </div>
+            <div class="heatmap-card-grid"></div>
+          </div>
         </div>
-        <div id="heatmap" class="heatmap"></div>
 
         <h2>Projects (last 30 days)</h2>
         <div id="projects" class="projects"></div>
@@ -789,46 +881,67 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       }
       function renderMetrics(data) {
         const prev = data.previous?.totals ?? null;
+        const t = data.totals;
+        // v0.28.0 — CCMeter parity: lead with Cost / Streak / Active / Avg/day
+        // / Efficiency, then expand into the detail KPIs. Streak/Active/Avg
+        // are server-computed in v0.28.0; older clients calling the same
+        // server with an older UI just ignore them.
+        const activeOf = (a, w) => (w > 0 ? `${a}/${w}` : String(a));
         const kpis = [
           {
             label: "Total cost",
-            value: formatUsd(data.totals.costUsd),
-            delta: deltaChip(data.totals.costUsd, prev?.costUsd ?? null),
+            value: formatUsd(t.costUsd),
+            delta: deltaChip(t.costUsd, prev?.costUsd ?? null),
           },
           {
-            label: "Events",
-            value: String(data.totals.events),
-            delta: deltaChip(data.totals.events, prev?.events ?? null),
+            label: "Streak",
+            value: (t.streak ?? 0) + (t.streak === 1 ? " day" : " days"),
+            delta: "",
           },
           {
-            label: "Input tokens",
-            value: formatTokens(data.totals.inputTokens),
-            delta: deltaChip(data.totals.inputTokens, prev?.inputTokens ?? null),
+            label: "Active days",
+            value: activeOf(t.activeDays ?? 0, t.windowDays ?? 0),
+            delta: "",
           },
           {
-            label: "Output tokens",
-            value: formatTokens(data.totals.outputTokens),
-            delta: deltaChip(data.totals.outputTokens, prev?.outputTokens ?? null),
-          },
-          {
-            label: "Cache reads",
-            value: formatTokens(data.totals.cacheReadTokens),
-            delta: deltaChip(data.totals.cacheReadTokens, prev?.cacheReadTokens ?? null),
-          },
-          {
-            label: "Lines added",
-            value: formatTokens(data.totals.linesAdded ?? 0),
-            delta: deltaChip(data.totals.linesAdded ?? 0, prev?.linesAdded ?? null),
-          },
-          {
-            label: "Lines removed",
-            value: formatTokens(data.totals.linesRemoved ?? 0),
-            delta: deltaChip(data.totals.linesRemoved ?? 0, prev?.linesRemoved ?? null),
+            label: "Avg/day (out)",
+            value: formatTokens(Math.round(t.avgOutputPerActiveDay ?? 0)),
+            delta: "",
           },
           {
             label: "Tokens / line",
-            value: efficiency(data.totals.outputTokens, data.totals.linesAdded ?? 0),
+            value: efficiency(t.outputTokens, t.linesAdded ?? 0),
             delta: "",
+          },
+          {
+            label: "Events",
+            value: String(t.events),
+            delta: deltaChip(t.events, prev?.events ?? null),
+          },
+          {
+            label: "Input tokens",
+            value: formatTokens(t.inputTokens),
+            delta: deltaChip(t.inputTokens, prev?.inputTokens ?? null),
+          },
+          {
+            label: "Output tokens",
+            value: formatTokens(t.outputTokens),
+            delta: deltaChip(t.outputTokens, prev?.outputTokens ?? null),
+          },
+          {
+            label: "Cache reads",
+            value: formatTokens(t.cacheReadTokens),
+            delta: deltaChip(t.cacheReadTokens, prev?.cacheReadTokens ?? null),
+          },
+          {
+            label: "Lines added",
+            value: formatTokens(t.linesAdded ?? 0),
+            delta: deltaChip(t.linesAdded ?? 0, prev?.linesAdded ?? null),
+          },
+          {
+            label: "Lines removed",
+            value: formatTokens(t.linesRemoved ?? 0),
+            delta: deltaChip(t.linesRemoved ?? 0, prev?.linesRemoved ?? null),
           },
         ];
         $("kpis").innerHTML = kpis
@@ -937,8 +1050,10 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         }
       }
 
-      // ── Activity heatmap ─────────────────────────────────────────────────
-      let currentHeatmapMetric = "cost";
+      // ── Activity heatmaps (v0.28.0: 4-up CCMeter-style) ──────────────────
+      // The four metrics rendered in the dashboard's headline row. Each has
+      // its own card, accent colour, and total label.
+      const HEATMAP_METRICS = ["inputTokens", "outputTokens", "linesChanged", "cost"];
       function heatmapLevel(value, thresholds) {
         if (value <= 0) return 0;
         if (value <= thresholds[0]) return 1;
@@ -954,24 +1069,26 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       }
       function formatHeatmapValue(metric, value) {
         if (metric === "cost") return formatUsd(value);
-        if (metric === "outputTokens") return formatTokens(value) + " out";
+        if (metric === "inputTokens" || metric === "outputTokens") return formatTokens(value);
+        if (metric === "linesChanged") return formatTokens(value) + " lines";
         if (metric === "sessions") return value + " sess";
         return value + " ev";
       }
-      function renderHeatmap(data) {
-        const pane = $("heatmap");
-        if (!data.dailyValues?.length) {
-          pane.innerHTML = '<p class="muted">No activity data yet.</p>';
+      function renderHeatmapCard(card, data) {
+        const grid = card.querySelector(".heatmap-card-grid");
+        const totalEl = card.querySelector("[data-total]");
+        if (!data?.dailyValues?.length) {
+          grid.innerHTML = "";
+          if (totalEl) totalEl.textContent = "—";
           return;
         }
+        const total = data.dailyValues.reduce((a, b) => a + b, 0);
+        if (totalEl) totalEl.textContent = formatHeatmapValue(data.metric, total);
         const thresholds = quartileThresholds(data.dailyValues);
         const cells = [];
         const dayMs = 24 * 60 * 60 * 1000;
-        // Pad with empty cells so the first column aligns to the right day-of-week.
-        // grid-auto-flow: column means cells fill top-to-bottom, then start a new column.
-        // We want row 0 = Sunday so we render N empty cells if firstDayOfWeek > 0.
         for (let i = 0; i < data.firstDayOfWeekUtc; i++) {
-          cells.push('<div class="heatmap-cell empty" title="(pad)"></div>');
+          cells.push('<div class="heatmap-cell empty"></div>');
         }
         for (let i = 0; i < data.dailyValues.length; i++) {
           const value = data.dailyValues[i];
@@ -984,29 +1101,25 @@ const tagline = "Self-hosted observatory for your AI coding agents";
             '<div class="heatmap-cell ' + cls + '" title="' + escape(title) + '"></div>',
           );
         }
-        const legend =
-          '<div class="heatmap-legend"><span>Less</span>' +
-          '<span class="swatch heatmap-cell empty"></span>' +
-          '<span class="swatch heatmap-cell lvl-1"></span>' +
-          '<span class="swatch heatmap-cell lvl-2"></span>' +
-          '<span class="swatch heatmap-cell lvl-3"></span>' +
-          '<span class="swatch heatmap-cell lvl-4"></span>' +
-          "<span>More</span></div>";
-        pane.innerHTML =
-          '<div class="heatmap-grid">' + cells.join("") + "</div>" + legend;
+        grid.innerHTML = cells.join("");
       }
-      async function loadHeatmap(metric = currentHeatmapMetric) {
-        currentHeatmapMetric = metric;
-        try {
-          const res = await apiFetch(
-            "/v1/heatmap?days=180&metric=" + encodeURIComponent(metric),
-          );
-          if (!res.ok) throw new Error("HTTP " + res.status);
-          renderHeatmap(await res.json());
-        } catch (e) {
-          $("heatmap").innerHTML =
-            '<div class="error">Failed to load heatmap: ' + escape(e.message) + "</div>";
-        }
+      async function loadHeatmaps() {
+        const cards = Array.from(document.querySelectorAll(".heatmap-card[data-metric]"));
+        const results = await Promise.all(
+          cards.map(async (card) => {
+            const metric = card.getAttribute("data-metric");
+            try {
+              const res = await apiFetch(
+                "/v1/heatmap?days=180&metric=" + encodeURIComponent(metric),
+              );
+              if (!res.ok) return { card, data: null };
+              return { card, data: await res.json() };
+            } catch {
+              return { card, data: null };
+            }
+          }),
+        );
+        for (const { card, data } of results) renderHeatmapCard(card, data);
       }
 
       // ── Rate limits ──────────────────────────────────────────────────────
@@ -1801,17 +1914,8 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         showDashboard();
         loadMetrics("today");
         loadProjects();
-        loadHeatmap();
+        loadHeatmaps();
         loadRateLimits();
-      });
-      document.querySelectorAll(".heatmap-tabs button[data-heatmap-metric]").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          document
-            .querySelectorAll(".heatmap-tabs button[data-heatmap-metric]")
-            .forEach((b) => b.classList.remove("active"));
-          btn.classList.add("active");
-          loadHeatmap(btn.dataset.heatmapMetric);
-        });
       });
       document.querySelectorAll(".tabs button[data-tab]").forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -1910,7 +2014,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         showDashboard();
         loadMetrics("today");
         loadProjects();
-        loadHeatmap();
+        loadHeatmaps();
         loadRateLimits();
       } else {
         showAuth();
