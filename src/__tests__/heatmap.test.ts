@@ -125,4 +125,23 @@ describe("aggregateHeatmap", () => {
     const result = aggregateHeatmap(db, PRICING, "cost", 7, now);
     expect(result.firstDayOfWeekUtc).toBe(new Date(result.fromMs).getUTCDay());
   });
+
+  it("v0.31.0: projectFilter restricts the daily values to events in that project", () => {
+    insertEvent(db, {
+      sessionFile: "/home/u/.claude/projects/D--polaris/s.jsonl",
+      tsMs: todayStartMs + 1,
+      outputTokens: 100,
+    });
+    insertEvent(db, {
+      sessionFile: "/home/u/.claude/projects/D--aegis/s.jsonl",
+      tsMs: todayStartMs + 2,
+      outputTokens: 900,
+    });
+    const filtered = aggregateHeatmap(db, PRICING, "outputTokens", 7, now, {
+      projectFilter: "D--polaris",
+    });
+    expect(filtered.dailyValues[6]).toBe(100);
+    const unfiltered = aggregateHeatmap(db, PRICING, "outputTokens", 7, now);
+    expect(unfiltered.dailyValues[6]).toBe(1000);
+  });
 });
