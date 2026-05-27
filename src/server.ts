@@ -209,6 +209,10 @@ export async function buildServer(): Promise<BuildResult> {
   // without the user having to open the dashboard. Only enabled when the
   // Telegram bot is configured (the channel itself is already wired
   // above); reuses the same bot token.
+  //
+  // Telegram caps callback_data at 64 bytes, so the channel sends only
+  // the first 16 chars of each id. We resolve the truncated prefixes
+  // back to the live ids by scanning SessionManager state.
   let tgPoller: TelegramPollerHandle | null = null;
   if (tg !== null) {
     tgPoller = startTelegramPoller(
@@ -216,7 +220,13 @@ export async function buildServer(): Promise<BuildResult> {
       async (payload) => {
         const mgr = sessionManager;
         if (!mgr) return { ok: false, message: "Polaris not ready" };
-        const ok = mgr.respondToApproval(payload.sessionId, payload.approvalId, {
+        const session = mgr.listSessions().find((s) => s.id.startsWith(payload.sessionId));
+        if (!session) return { ok: false, message: "Session no longer active" };
+        const approval = mgr
+          .listApprovals(session.id)
+          .find((a) => a.approvalId.startsWith(payload.approvalId));
+        if (!approval) return { ok: false, message: "Approval already handled or expired" };
+        const ok = mgr.respondToApproval(session.id, approval.approvalId, {
           outcome: "selected",
           optionId: payload.optionId,
         });

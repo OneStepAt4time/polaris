@@ -11,12 +11,21 @@ export interface TelegramConfig {
  * v0.35.0 — when `opts.inlineActions` and `opts.correlationId` are both
  * present, the message ships with a `reply_markup.inline_keyboard` so the
  * user can approve/deny directly from Telegram. callback_data carries
- * `polaris:{correlationId}:{actionId}` which `telegram-poller.ts` parses
- * on incoming `callback_query` updates.
+ * `polaris:{sessionPrefix}:{approvalPrefix}:{actionId}` which
+ * `telegram-poller.ts` parses on incoming `callback_query` updates.
  *
- * Telegram caps callback_data at 64 bytes. `polaris:` + a v4 UUID (36
- * chars) + ":" + "Allow"/"Deny" stays well under the limit.
+ * Telegram caps callback_data at 64 bytes. Two full v4 UUIDs (36 chars
+ * each) plus the prefix and option overflow that limit (~93 bytes), so
+ * we truncate each id to the first 16 chars. The server-side handler
+ * resolves the truncated prefix back to the full id via SessionManager
+ * lookups — collision probability with 16 hex chars is ~2^-64 per pair,
+ * negligible for any realistic load (≤100 active sessions × ≤5 pending
+ * approvals = 500 ids in flight).
+ *
+ * correlationId from RuleMatch is expected to be
+ * `{sessionId}:{approvalId}`. We truncate each half here.
  */
+const CALLBACK_ID_PREFIX_LEN = 16;
 export async function sendTelegramMessage(
   cfg: TelegramConfig,
   text: string,
@@ -37,14 +46,19 @@ export async function sendTelegramMessage(
     typeof opts.correlationId === "string" &&
     opts.correlationId.length > 0
   ) {
-    body.reply_markup = {
-      inline_keyboard: [
-        opts.inlineActions.map((a) => ({
-          text: a.label,
-          callback_data: `polaris:${opts.correlationId}:${a.id}`,
-        })),
-      ],
-    };
+    const [sessionFull, approvalFull] = opts.correlationId.split(":");
+    const sessionShort = (sessionFull ?? "").slice(0, CALLBACK_ID_PREFIX_LEN);
+    const approvalShort = (approvalFull ?? "").slice(0, CALLBACK_ID_PREFIX_LEN);
+    if (sessionShort !== "" && approvalShort !== "") {
+      body.reply_markup = {
+        inline_keyboard: [
+          opts.inlineActions.map((a) => ({
+            text: a.label,
+            callback_data: `polaris:${sessionShort}:${approvalShort}:${a.id}`,
+          })),
+        ],
+      };
+    }
   }
   try {
     const res = await fetchImpl(url, {
