@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type PolarisDb, openDb } from "../db.js";
 import type { PricingTable } from "../metrics/pricing.js";
-import { aggregateByProject, projectKey, resolveProjectsWindow } from "../metrics/projects.js";
+import {
+  aggregateByProject,
+  modelFamily,
+  projectKey,
+  resolveProjectsWindow,
+} from "../metrics/projects.js";
 
 const PRICING: PricingTable = {
   patterns: [{ match: "claude-test", input: 3, output: 15, cacheRead: 0.3 }],
@@ -10,18 +15,28 @@ const PRICING: PricingTable = {
 
 function insertEvent(
   db: PolarisDb,
-  opts: { sessionFile: string; tsMs: number; outputTokens: number; reqSuffix?: string },
+  opts: {
+    sessionFile: string;
+    tsMs: number;
+    outputTokens: number;
+    reqSuffix?: string;
+    model?: string;
+    linesAdded?: number;
+    linesRemoved?: number;
+  },
 ): void {
   db.insertEvent({
     requestId: `req-${opts.tsMs}-${opts.outputTokens}-${opts.reqSuffix ?? ""}-${opts.sessionFile}`,
     sessionFile: opts.sessionFile,
     tsMs: opts.tsMs,
-    model: "claude-test",
+    model: opts.model ?? "claude-test",
     inputTokens: 0,
     outputTokens: opts.outputTokens,
     cacheReadTokens: 0,
     cacheCreationTokens: 0,
     rawCostUsd: null,
+    linesAdded: opts.linesAdded ?? 0,
+    linesRemoved: opts.linesRemoved ?? 0,
   });
 }
 
@@ -155,5 +170,90 @@ describe("aggregateByProject", () => {
     const result = aggregateByProject(db, PRICING, 30, now);
     expect(result.projects[0]?.events).toBe(3);
     expect(result.projects[0]?.sessions).toBe(2);
+  });
+
+  it("v0.29.0: sums linesAdded/linesRemoved and computes outputPerLine", () => {
+    insertEvent(db, {
+      sessionFile: "/u/p/a/s.jsonl",
+      tsMs: todayStartMs + 1,
+      outputTokens: 10_000,
+      linesAdded: 100,
+      linesRemoved: 30,
+    });
+    insertEvent(db, {
+      sessionFile: "/u/p/a/s.jsonl",
+      tsMs: todayStartMs + 2,
+      outputTokens: 5_000,
+      linesAdded: 50,
+      linesRemoved: 10,
+      reqSuffix: "x",
+    });
+    const p = aggregateByProject(db, PRICING, 30, now).projects[0];
+    expect(p?.linesAdded).toBe(150);
+    expect(p?.linesRemoved).toBe(40);
+    expect(p?.outputPerLine).toBeCloseTo(15_000 / 150, 6);
+  });
+
+  it("v0.29.0: outputPerLine is 0 when no lines were added", () => {
+    insertEvent(db, {
+      sessionFile: "/u/p/a/s.jsonl",
+      tsMs: todayStartMs + 1,
+      outputTokens: 1234,
+    });
+    const p = aggregateByProject(db, PRICING, 30, now).projects[0];
+    expect(p?.outputPerLine).toBe(0);
+  });
+
+  it("v0.29.0: activeMs sums small intra-session gaps + a per-session tail", () => {
+    const min = 60_000;
+    insertEvent(db, { sessionFile: "/u/p/a/s.jsonl", tsMs: todayStartMs, outputTokens: 1 });
+    insertEvent(db, {
+      sessionFile: "/u/p/a/s.jsonl",
+      tsMs: todayStartMs + 2 * min, // 2-min gap, counted
+      outputTokens: 1,
+      reqSuffix: "b",
+    });
+    insertEvent(db, {
+      sessionFile: "/u/p/a/s.jsonl",
+      tsMs: todayStartMs + 30 * min, // 28-min gap, dropped (over 5 min)
+      outputTokens: 1,
+      reqSuffix: "c",
+    });
+    const p = aggregateByProject(db, PRICING, 30, now).projects[0];
+    expect(p?.activeMs).toBe(2 * min + 1 * min); // gap=2m + tail=1m
+  });
+
+  it("v0.29.0: dailyByFamily splits output tokens by model family", () => {
+    insertEvent(db, {
+      sessionFile: "/u/p/a/s.jsonl",
+      tsMs: todayStartMs + 1,
+      outputTokens: 1000,
+      model: "claude-opus-4-7",
+    });
+    insertEvent(db, {
+      sessionFile: "/u/p/a/s.jsonl",
+      tsMs: todayStartMs + 2,
+      outputTokens: 500,
+      model: "claude-sonnet-4-6",
+      reqSuffix: "s",
+    });
+    const p = aggregateByProject(db, PRICING, 3, now).projects[0];
+    const opus = p?.dailyByFamily.opus ?? [];
+    const sonnet = p?.dailyByFamily.sonnet ?? [];
+    expect(opus[opus.length - 1]).toBe(1000);
+    expect(sonnet[sonnet.length - 1]).toBe(500);
+  });
+});
+
+describe("modelFamily (v0.29.0)", () => {
+  it("buckets opus / sonnet / haiku by substring", () => {
+    expect(modelFamily("claude-opus-4-7")).toBe("opus");
+    expect(modelFamily("claude-sonnet-4-6-20260101")).toBe("sonnet");
+    expect(modelFamily("claude-haiku-4-5")).toBe("haiku");
+  });
+  it("returns 'other' for unrecognised models (e.g. custom proxies)", () => {
+    expect(modelFamily("gpt-4-turbo")).toBe("other");
+    expect(modelFamily("")).toBe("other");
+    expect(modelFamily("local-model-v1")).toBe("other");
   });
 });

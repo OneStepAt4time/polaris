@@ -461,31 +461,66 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         border: 1px solid var(--border);
         border-radius: 6px;
         padding: 0.75rem 1rem;
+        display: grid;
+        gap: 0.45rem;
       }
       .project-name {
         font-size: 0.8125rem;
         color: var(--accent);
         word-break: break-all;
-        margin-bottom: 0.5rem;
       }
-      .project-stats {
+      .project-row {
         display: flex;
         justify-content: space-between;
+        align-items: baseline;
         gap: 0.5rem;
         font-size: 0.75rem;
-        margin-bottom: 0.5rem;
+        font-variant-numeric: tabular-nums;
       }
       .project-cost {
         color: var(--fg);
         font-weight: 600;
+        font-size: 0.9rem;
       }
-      .project-meta {
+      .project-meta { color: var(--fg-dim); }
+      .project-tokens { color: var(--fg-dim); }
+      .project-tokens code {
+        color: var(--fg);
+        background: transparent;
+        padding: 0;
+      }
+      .project-lines .added { color: #70d99c; }
+      .project-lines .removed { color: #ff7878; }
+      /* v0.29.0 — efficiency bar (yellow → green → red by tok/ln tier). */
+      .project-eff {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+      }
+      .project-eff-bar {
+        flex: 1;
+        height: 6px;
+        background: rgba(255,255,255,0.08);
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      .project-eff-fill {
+        height: 100%;
+        border-radius: 3px;
+      }
+      .project-eff-fill.tier-good { background: #70d99c; }
+      .project-eff-fill.tier-mid  { background: #ffd54a; }
+      .project-eff-fill.tier-bad  { background: #ff7878; }
+      .project-eff-label {
+        font-size: 0.7rem;
         color: var(--fg-dim);
+        white-space: nowrap;
       }
+      /* Single-color sparkline (back-compat, kept for the flat cost line). */
       .sparkline {
         display: block;
         width: 100%;
-        height: 32px;
+        height: 24px;
       }
       .sparkline path {
         fill: none;
@@ -497,6 +532,12 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         opacity: 0.12;
         stroke: none;
       }
+      /* v0.29.0 — stacked sparkline (opus violet / sonnet blue / haiku green / other grey). */
+      .sparkline-stack { display: block; width: 100%; height: 24px; }
+      .sparkline-stack .lyr-opus   { fill: rgba(197,151,255,0.85); }
+      .sparkline-stack .lyr-sonnet { fill: rgba(105,184,255,0.85); }
+      .sparkline-stack .lyr-haiku  { fill: rgba(112,217,156,0.85); }
+      .sparkline-stack .lyr-other  { fill: rgba(180,180,180,0.55); }
       .rate-limits {
         background: var(--bg-card);
         border: 1px solid var(--border);
@@ -1017,28 +1058,125 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         if (!res.ok) throw new Error("HTTP " + res.status);
         return res.json();
       }
+      // v0.29.0 — render duration as CCMeter does ("Xh Ym" / "Xm Ys" / "Xs").
+      function formatActiveDuration(ms) {
+        if (!Number.isFinite(ms) || ms <= 0) return "—";
+        const totalSec = Math.round(ms / 1000);
+        const h = Math.floor(totalSec / 3600);
+        const m = Math.floor((totalSec % 3600) / 60);
+        const s = totalSec % 60;
+        if (h > 0) return h + "h" + (m > 0 ? m + "m" : "");
+        if (m > 0) return m + "m" + (s > 0 && m < 10 ? s + "s" : "");
+        return s + "s";
+      }
+      // CCMeter colours its efficiency bar green / yellow / red based on
+      // tokens-per-line tiers. Lower = more concise output → greener.
+      function efficiencyTier(tokPerLine) {
+        if (tokPerLine <= 0) return { cls: "tier-mid", pct: 0 };
+        if (tokPerLine <= 80) return { cls: "tier-good", pct: 30 };
+        if (tokPerLine <= 200) return { cls: "tier-mid", pct: 60 };
+        return { cls: "tier-bad", pct: 100 };
+      }
+      // v0.29.0 — stacked sparkline that shows daily output tokens per
+      // model family. Stacks opus over sonnet over haiku, with "other"
+      // as a thin grey base.
+      function stackedSparkline(byFamily) {
+        if (!byFamily) return "";
+        const families = ["other", "haiku", "sonnet", "opus"];
+        const series = families.map((f) => byFamily[f] ?? []);
+        const days = Math.max(0, ...series.map((s) => s.length));
+        if (days === 0) return "";
+        const w = 260;
+        const h = 24;
+        const totals = Array(days).fill(0);
+        for (const s of series) {
+          for (let i = 0; i < days; i++) totals[i] += s[i] ?? 0;
+        }
+        const max = Math.max(0.0001, ...totals);
+        const step = days > 1 ? w / (days - 1) : 0;
+        // Build cumulative top edges per layer, bottom-up.
+        const stacks = [];
+        const running = Array(days).fill(0);
+        for (const layer of series) {
+          const tops = [];
+          for (let i = 0; i < days; i++) {
+            running[i] += layer[i] ?? 0;
+            tops.push(running[i]);
+          }
+          stacks.push(tops.slice());
+        }
+        // Build polygons bottom-up so the lowest layer paints first.
+        let lastBottom = Array(days).fill(0);
+        const paths = [];
+        for (let li = 0; li < stacks.length; li++) {
+          const top = stacks[li];
+          const bot = lastBottom;
+          const cls = "lyr-" + families[li];
+          const pts = [];
+          for (let i = 0; i < days; i++) {
+            const x = i * step;
+            const y = h - ((top[i] ?? 0) / max) * (h - 1);
+            pts.push(x.toFixed(1) + "," + y.toFixed(1));
+          }
+          for (let i = days - 1; i >= 0; i--) {
+            const x = i * step;
+            const y = h - ((bot[i] ?? 0) / max) * (h - 1);
+            pts.push(x.toFixed(1) + "," + y.toFixed(1));
+          }
+          paths.push('<polygon class="' + cls + '" points="' + pts.join(" ") + '"/>');
+          lastBottom = top.slice();
+        }
+        return (
+          '<svg class="sparkline-stack" viewBox="0 0 ' + w + " " + h +
+          '" preserveAspectRatio="none">' + paths.join("") + "</svg>"
+        );
+      }
       function renderProjects(data) {
         if (!data.projects || data.projects.length === 0) {
           $("projects").innerHTML = '<p class="muted">No project data in the last 30 days.</p>';
           return;
         }
         $("projects").innerHTML = data.projects
-          .map(
-            (p) =>
-              '<div class="project-card"><div class="project-name">' +
-              escape(p.name) +
-              '</div><div class="project-stats"><span class="project-cost">' +
-              formatUsd(p.costUsd) +
-              '</span><span class="project-meta">' +
-              p.sessions +
-              " sess · " +
-              p.events +
-              " ev · " +
-              formatTokens(p.outputTokens) +
-              " out</span></div>" +
-              sparklineSvg(p.dailyCostUsd) +
-              "</div>",
-          )
+          .map((p) => {
+            const tpl = p.outputPerLine ?? 0;
+            const eff = efficiencyTier(tpl);
+            const linesAdded = p.linesAdded ?? 0;
+            const linesRemoved = p.linesRemoved ?? 0;
+            const linesRow =
+              linesAdded > 0 || linesRemoved > 0
+                ? '<div class="project-row project-lines">' +
+                  '<span><span class="added">+' + formatTokens(linesAdded) +
+                  '</span> <span class="removed">-' + formatTokens(linesRemoved) + "</span></span>" +
+                  '<span class="project-meta">' +
+                  p.sessions + " sess · " + p.events + " ev</span>" +
+                  "</div>"
+                : '<div class="project-row"><span class="project-meta">' +
+                  p.sessions + " sess · " + p.events + " ev</span></div>";
+            const tplLabel = tpl > 0 ? Math.round(tpl) + " tok/ln" : "no lines yet";
+            return (
+              '<div class="project-card">' +
+              '<div class="project-name">' + escape(p.name) + "</div>" +
+              '<div class="project-row">' +
+              '<span class="project-cost">' + formatUsd(p.costUsd) + "</span>" +
+              '<span class="project-meta">⏱ ' +
+              escape(formatActiveDuration(p.activeMs ?? 0)) +
+              "</span>" +
+              "</div>" +
+              '<div class="project-row project-tokens">' +
+              "in <code>" + formatTokens(p.inputTokens) + "</code> · " +
+              "out <code>" + formatTokens(p.outputTokens) + "</code> · " +
+              "cache <code>" + formatTokens(p.cacheReadTokens) + "</code>" +
+              "</div>" +
+              linesRow +
+              '<div class="project-eff">' +
+              '<div class="project-eff-bar"><div class="project-eff-fill ' +
+              eff.cls + '" style="width:' + eff.pct + '%"></div></div>' +
+              '<span class="project-eff-label">' + escape(tplLabel) + "</span>" +
+              "</div>" +
+              (stackedSparkline(p.dailyByFamily) || sparklineSvg(p.dailyCostUsd)) +
+              "</div>"
+            );
+          })
           .join("");
       }
       async function loadProjects() {
