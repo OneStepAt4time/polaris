@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type EventRow, type PolarisDb, openDb } from "../db.js";
-import { aggregate, resolvePreviousRange, resolveRange } from "../metrics/aggregator.js";
+import {
+  aggregate,
+  computeActivity,
+  resolvePreviousRange,
+  resolveRange,
+} from "../metrics/aggregator.js";
 import { loadPricing } from "../metrics/pricing.js";
 
 const pricing = loadPricing();
@@ -104,6 +109,56 @@ describe("aggregate", () => {
     const result = aggregate(db, "all", 0, Date.now() + 1, pricing);
     expect(result.totals.linesAdded).toBe(0);
     expect(result.totals.linesRemoved).toBe(0);
+  });
+
+  it("v0.28.0: empty DB returns zero activity metrics", () => {
+    const r = aggregate(db, "today", 0, Date.now(), pricing);
+    expect(r.totals.activeDays).toBe(0);
+    expect(r.totals.streak).toBe(0);
+    expect(r.totals.avgOutputPerActiveDay).toBe(0);
+    expect(r.totals.windowDays).toBeGreaterThanOrEqual(1);
+  });
+
+  it("v0.28.0: activeDays + avgOutputPerActiveDay match real data", () => {
+    const dayMs = 24 * 60 * 60 * 1000;
+    const today = Math.floor(Date.now() / dayMs) * dayMs;
+    db.insertEvent(sample({ requestId: "x", tsMs: today, outputTokens: 1000 }));
+    db.insertEvent(sample({ requestId: "y", tsMs: today - dayMs, outputTokens: 500 }));
+    const r = aggregate(db, "7d", today - 6 * dayMs, today + dayMs - 1, pricing);
+    expect(r.totals.activeDays).toBe(2);
+    // 1500 output tokens across 2 active days
+    expect(r.totals.avgOutputPerActiveDay).toBeCloseTo(750, 1);
+  });
+});
+
+describe("computeActivity (v0.28.0)", () => {
+  const dayMs = 24 * 60 * 60 * 1000;
+  const today = Math.floor(Date.parse("2026-05-21T15:30:00.000Z") / dayMs) * dayMs;
+
+  it("returns 0 for an empty list", () => {
+    const a = computeActivity([], today - 6 * dayMs, today);
+    expect(a.activeDays).toBe(0);
+    expect(a.streak).toBe(0);
+  });
+
+  it("computes streak of N when last N consecutive days are active", () => {
+    const days = [today - 2 * dayMs, today - dayMs, today];
+    const a = computeActivity(days, today - 6 * dayMs, today);
+    expect(a.activeDays).toBe(3);
+    expect(a.streak).toBe(3);
+  });
+
+  it("returns streak 0 when the latest window day is not active", () => {
+    // gap on `today`; previous days active.
+    const days = [today - 3 * dayMs, today - 2 * dayMs];
+    const a = computeActivity(days, today - 6 * dayMs, today);
+    expect(a.activeDays).toBe(2);
+    expect(a.streak).toBe(0);
+  });
+
+  it("windowDays counts the inclusive day span", () => {
+    const a = computeActivity([], today - 6 * dayMs, today);
+    expect(a.windowDays).toBe(7);
   });
 });
 
