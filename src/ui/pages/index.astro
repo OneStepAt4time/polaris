@@ -161,6 +161,67 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         gap: 0.5rem;
         margin: 1rem 0;
       }
+      /* v0.33.0 — toolbar wraps range tabs + live indicator on one row so
+         the auto-refresh signal is always visible. */
+      .metrics-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+      .metrics-toolbar .range-tabs { margin: 1rem 0; }
+      .live-indicator {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        font-size: 0.75rem;
+        color: var(--fg-dim);
+      }
+      .live-indicator .live-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #70d99c;
+        box-shadow: 0 0 6px rgba(112, 217, 156, 0.6);
+        animation: live-pulse 2s ease-in-out infinite;
+      }
+      .live-indicator.is-paused .live-dot {
+        background: var(--fg-dim);
+        box-shadow: none;
+        animation: none;
+      }
+      @keyframes live-pulse {
+        0%, 100% { opacity: 1; }
+        50%      { opacity: 0.35; }
+      }
+      .live-indicator .live-label {
+        color: var(--fg);
+        font-weight: 600;
+      }
+      .live-indicator.is-paused .live-label { color: var(--fg-dim); }
+      .live-indicator .live-meta { font-variant-numeric: tabular-nums; }
+      .live-indicator button {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--fg-dim);
+        border-radius: 4px;
+        padding: 0.15rem 0.45rem;
+        cursor: pointer;
+        font-size: 0.9rem;
+        line-height: 1;
+      }
+      .live-indicator button:hover {
+        color: var(--fg);
+        border-color: var(--fg-dim);
+      }
+      .live-indicator button.is-refreshing {
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to   { transform: rotate(360deg); }
+      }
       .tabs button,
       .range-tabs button {
         background: var(--bg-card);
@@ -842,13 +903,21 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       </div>
 
       <div id="tab-metrics">
-        <div class="range-tabs" role="tablist">
-          <button data-range="1h">1h</button>
-          <button data-range="12h">12h</button>
-          <button data-range="today" class="active">Today</button>
-          <button data-range="7d">7 days</button>
-          <button data-range="30d">30 days</button>
-          <button data-range="all">All</button>
+        <div class="metrics-toolbar">
+          <div class="range-tabs" role="tablist">
+            <button data-range="1h">1h</button>
+            <button data-range="12h">12h</button>
+            <button data-range="today" class="active">Today</button>
+            <button data-range="7d">7 days</button>
+            <button data-range="30d">30 days</button>
+            <button data-range="all">All</button>
+          </div>
+          <div class="live-indicator" id="live-indicator">
+            <span class="live-dot"></span>
+            <span class="live-label">Live</span>
+            <span class="live-meta" id="live-meta">just now</span>
+            <button type="button" id="manual-refresh" title="Refresh now (r)">↻</button>
+          </div>
         </div>
         <div id="project-filter-banner" class="project-filter-banner" hidden>
           <span class="muted">Filtering by project:</span>
@@ -1061,12 +1130,14 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       const showAuth = () => {
         $("auth-pane").hidden = false;
         $("dashboard").hidden = true;
+        stopAutoRefresh();
       };
       const showDashboard = () => {
         $("auth-pane").hidden = true;
         $("dashboard").hidden = false;
         startSessionsPoll();
         updateProjectFilterBanner();
+        startAutoRefresh();
       };
       function reloadDashboard() {
         const range =
@@ -1076,7 +1147,61 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         loadMetrics(range);
         loadProjects();
         loadHeatmaps();
+        markRefreshed();
       }
+
+      // v0.33.0 — auto-refresh the Metrics tab every 30 s while the dashboard
+      // is visible and the user is on that tab. Sessions tab keeps its own
+      // SSE+poll pipeline; we don't want to step on it.
+      const AUTO_REFRESH_MS = 30_000;
+      const LIVE_META_TICK_MS = 5_000;
+      let autoRefreshHandle = null;
+      let liveMetaHandle = null;
+      let lastRefreshedAt = Date.now();
+      function isMetricsTabActive() {
+        const btn = document.querySelector('.tabs button[data-tab="metrics"]');
+        return !!btn && btn.classList.contains("active");
+      }
+      function markRefreshed() {
+        lastRefreshedAt = Date.now();
+        renderLiveMeta();
+      }
+      function renderLiveMeta() {
+        const el = document.getElementById("live-meta");
+        if (!el) return;
+        const ind = document.getElementById("live-indicator");
+        if (!ind) return;
+        const paused = document.visibilityState !== "visible" || !isMetricsTabActive();
+        ind.classList.toggle("is-paused", paused);
+        if (paused) {
+          el.textContent = "paused";
+          return;
+        }
+        const ageSec = Math.max(0, Math.round((Date.now() - lastRefreshedAt) / 1000));
+        el.textContent = ageSec < 5 ? "just now" : ageSec + "s ago";
+      }
+      function startAutoRefresh() {
+        stopAutoRefresh();
+        markRefreshed();
+        autoRefreshHandle = setInterval(() => {
+          if (document.visibilityState !== "visible") return;
+          if (!isMetricsTabActive()) return;
+          reloadDashboard();
+        }, AUTO_REFRESH_MS);
+        liveMetaHandle = setInterval(renderLiveMeta, LIVE_META_TICK_MS);
+        renderLiveMeta();
+      }
+      function stopAutoRefresh() {
+        if (autoRefreshHandle !== null) {
+          clearInterval(autoRefreshHandle);
+          autoRefreshHandle = null;
+        }
+        if (liveMetaHandle !== null) {
+          clearInterval(liveMetaHandle);
+          liveMetaHandle = null;
+        }
+      }
+      document.addEventListener("visibilitychange", renderLiveMeta);
 
       async function apiFetch(path, init = {}) {
         const res = await fetch(path, {
@@ -2361,7 +2486,31 @@ const tagline = "Self-hosted observatory for your AI coding agents";
           $("tab-metrics").hidden = tab !== "metrics";
           $("tab-sessions").hidden = tab !== "sessions";
           if (tab === "sessions") refreshSessions();
+          // v0.33.0 — update the live indicator state when switching tabs
+          // so the "paused" hint matches what the auto-refresh interval
+          // actually does.
+          renderLiveMeta();
         });
+      });
+      // v0.33.0 — manual refresh button and 'r' keyboard shortcut. The
+      // shortcut is ignored while the user is typing in a text field.
+      $("manual-refresh").addEventListener("click", () => {
+        const btn = $("manual-refresh");
+        btn.classList.add("is-refreshing");
+        reloadDashboard();
+        setTimeout(() => btn.classList.remove("is-refreshing"), 700);
+      });
+      document.addEventListener("keydown", (ev) => {
+        if (ev.key !== "r" && ev.key !== "R") return;
+        if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+        const t = ev.target;
+        if (t instanceof HTMLElement) {
+          const tag = t.tagName.toLowerCase();
+          if (tag === "input" || tag === "textarea" || t.isContentEditable) return;
+        }
+        if (!isMetricsTabActive()) return;
+        ev.preventDefault();
+        $("manual-refresh").click();
       });
       document.querySelectorAll(".range-tabs button[data-range]").forEach((btn) => {
         btn.addEventListener("click", () => {
