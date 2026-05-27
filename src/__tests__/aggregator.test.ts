@@ -129,6 +129,69 @@ describe("aggregate", () => {
     // 1500 output tokens across 2 active days
     expect(r.totals.avgOutputPerActiveDay).toBeCloseTo(750, 1);
   });
+
+  it("v0.31.0: projectFilter restricts totals + perModel to events in that project", () => {
+    db.insertEvent(
+      sample({
+        requestId: "a",
+        sessionFile: "/home/u/.claude/projects/D--polaris/s.jsonl",
+        inputTokens: 100,
+        outputTokens: 200,
+      }),
+    );
+    db.insertEvent(
+      sample({
+        requestId: "b",
+        sessionFile: "/home/u/.claude/projects/D--aegis/s.jsonl",
+        inputTokens: 700,
+        outputTokens: 900,
+      }),
+    );
+    const r = aggregate(db, "all", 0, Date.now() + 1, pricing, {
+      projectFilter: "D--polaris",
+    });
+    expect(r.totals.events).toBe(1);
+    expect(r.totals.inputTokens).toBe(100);
+    expect(r.totals.outputTokens).toBe(200);
+    expect(r.perModel).toHaveLength(1);
+  });
+
+  it("v0.31.0: projectFilter=null behaves identically to unfiltered (SQL fast-path)", () => {
+    db.insertEvent(
+      sample({
+        requestId: "a",
+        sessionFile: "/u/.claude/projects/D--polaris/s.jsonl",
+        outputTokens: 100,
+      }),
+    );
+    db.insertEvent(
+      sample({
+        requestId: "b",
+        sessionFile: "/u/.claude/projects/D--aegis/s.jsonl",
+        outputTokens: 300,
+      }),
+    );
+    const unfilt = aggregate(db, "all", 0, Date.now() + 1, pricing);
+    const explicit = aggregate(db, "all", 0, Date.now() + 1, pricing, { projectFilter: null });
+    expect(unfilt.totals.events).toBe(explicit.totals.events);
+    expect(unfilt.totals.outputTokens).toBe(explicit.totals.outputTokens);
+    expect(unfilt.totals.costUsd).toBeCloseTo(explicit.totals.costUsd, 6);
+  });
+
+  it("v0.31.0: projectFilter on a project with no events returns zeros", () => {
+    db.insertEvent(
+      sample({
+        requestId: "a",
+        sessionFile: "/u/.claude/projects/D--polaris/s.jsonl",
+        outputTokens: 100,
+      }),
+    );
+    const r = aggregate(db, "all", 0, Date.now() + 1, pricing, {
+      projectFilter: "no-such-project",
+    });
+    expect(r.totals.events).toBe(0);
+    expect(r.perModel).toEqual([]);
+  });
 });
 
 describe("computeActivity (v0.28.0)", () => {

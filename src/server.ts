@@ -230,7 +230,7 @@ export async function buildServer(): Promise<BuildResult> {
   });
 
   app.get("/v1/metrics", { config: { requireAuth: true } }, async (request, reply) => {
-    const query = request.query as { range?: string };
+    const query = request.query as { range?: string; project?: string };
     const parsed = RangeSchema.safeParse(query.range);
     if (!parsed.success) {
       return reply.code(400).send({
@@ -240,13 +240,16 @@ export async function buildServer(): Promise<BuildResult> {
     const range: TimeRange = parsed.data;
     const { fromMs, toMs } = resolveRange(range);
     const pricing = loadPricing();
-    const result = aggregate(db, range, fromMs, toMs, pricing);
-    // v0.25.0: also compute the previous-period block so the UI can render
-    // % deltas on each KPI tile. Skipped for `range=all` where there's no
-    // meaningful predecessor.
+    // v0.31.0: optional ?project=X filter — falls back to the slow JS-path
+    // aggregator. Unfiltered requests keep the fast SQL path from v0.24.0.
+    const projectFilter =
+      typeof query.project === "string" && query.project.length > 0 ? query.project : null;
+    const result = aggregate(db, range, fromMs, toMs, pricing, { projectFilter });
     const prevRange = resolvePreviousRange(range);
     if (prevRange !== null) {
-      const prev = aggregate(db, range, prevRange.fromMs, prevRange.toMs, pricing);
+      const prev = aggregate(db, range, prevRange.fromMs, prevRange.toMs, pricing, {
+        projectFilter,
+      });
       result.previous = {
         fromMs: prevRange.fromMs,
         toMs: prevRange.toMs,
@@ -267,7 +270,7 @@ export async function buildServer(): Promise<BuildResult> {
   });
 
   app.get("/v1/heatmap", { config: { requireAuth: true } }, async (request, reply) => {
-    const query = request.query as { days?: string; metric?: string };
+    const query = request.query as { days?: string; metric?: string; project?: string };
     const daysRaw = query.days !== undefined ? Number(query.days) : 180;
     if (!Number.isFinite(daysRaw) || daysRaw <= 0) {
       return reply.code(400).send({ error: "Invalid days. Must be a positive integer." });
@@ -279,7 +282,11 @@ export async function buildServer(): Promise<BuildResult> {
       });
     }
     const pricing = loadPricing();
-    return reply.send(aggregateHeatmap(db, pricing, metricRaw, daysRaw));
+    const projectFilter =
+      typeof query.project === "string" && query.project.length > 0 ? query.project : null;
+    return reply.send(
+      aggregateHeatmap(db, pricing, metricRaw, daysRaw, undefined, { projectFilter }),
+    );
   });
 
   app.get("/v1/rate-limits", { config: { requireAuth: true } }, async (_request, reply) => {
