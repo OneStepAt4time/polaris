@@ -626,6 +626,62 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         padding: 0 0.1rem;
       }
       .project-hide:hover { color: var(--danger); }
+      /* v0.39.0 — merge / unmerge button + merged-group count badge. Same
+         quiet toolbar weight as star/rename/hide; sits between rename and hide. */
+      .project-merge {
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        font-size: 0.9rem;
+        line-height: 1;
+        color: var(--fg-dim);
+        padding: 0 0.1rem;
+      }
+      .project-merge:hover,
+      .project-merge.is-active { color: var(--accent); }
+      .project-card.is-merge-source {
+        border-color: var(--accent);
+        box-shadow: inset 0 0 0 1px var(--accent);
+      }
+      .project-merged-badge {
+        font-size: 0.65rem;
+        color: var(--fg-dim);
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        padding: 0 0.25rem;
+        margin-left: 0.2rem;
+      }
+      /* While a merge is in progress, every other project name invites a
+         click as the merge target. */
+      .projects.merging .project-card:not(.is-merge-source)
+        .project-name > span[data-project-filter] {
+        outline: 1px dashed var(--accent);
+        outline-offset: 2px;
+        cursor: copy;
+      }
+      .merge-hint {
+        grid-column: 1 / -1;
+        font-size: 0.8rem;
+        color: var(--fg);
+        background: var(--bg-card);
+        border: 1px solid var(--accent);
+        border-radius: 5px;
+        padding: 0.4rem 0.6rem;
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+      }
+      .merge-hint button {
+        margin-left: auto;
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--fg-dim);
+        border-radius: 4px;
+        padding: 0.1rem 0.5rem;
+        cursor: pointer;
+        font-size: 0.75rem;
+      }
+      .merge-hint button:hover { color: var(--fg); border-color: var(--fg-dim); }
       /* v0.34.0 — inline rename input replaces the name span while editing.
          Same width as the span so the card layout doesn't reshuffle. */
       .project-rename-input {
@@ -1105,7 +1161,9 @@ const tagline = "Self-hosted observatory for your AI coding agents";
       }
       function projectFilterQuery() {
         const name = getProjectFilter();
-        return name ? "&project=" + encodeURIComponent(name) : "";
+        if (!name) return "";
+        // v0.39.0 — a merged card drills into every member folder at once.
+        return "&project=" + encodeURIComponent(membersOf(name).join(","));
       }
 
       // v0.30.0 — starred projects pin to the top of the grid. Persisted in
@@ -1204,6 +1262,125 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         const all = getAliases();
         return Object.prototype.hasOwnProperty.call(all, name) ? all[name] : name;
       }
+      // v0.39.0 — merge projects. CCMeter lets you fold several on-disk
+      // folders (e.g. a repo and its worktree) into one logical project.
+      // Stored as { member -> leader }; a project absent from the map is its
+      // own leader. Per-browser-local like star/hide/alias — the on-disk
+      // project keys stay the source of truth, the merge map only changes how
+      // cards are grouped on screen and which keys a drill-in filters by.
+      const MERGES_KEY = "polaris.projectMerges";
+      function getMerges() {
+        try {
+          const raw = localStorage.getItem(MERGES_KEY);
+          if (!raw) return {};
+          const obj = JSON.parse(raw);
+          return obj && typeof obj === "object" && !Array.isArray(obj) ? obj : {};
+        } catch {
+          return {};
+        }
+      }
+      function setMerges(obj) {
+        if (Object.keys(obj).length === 0) localStorage.removeItem(MERGES_KEY);
+        else localStorage.setItem(MERGES_KEY, JSON.stringify(obj));
+      }
+      function leaderOf(name, merges) {
+        return Object.prototype.hasOwnProperty.call(merges, name) ? merges[name] : name;
+      }
+      // Fold `member` into `target`'s group. Flattens on write so the map
+      // never grows chains: members always point straight at a terminal leader.
+      function mergeInto(member, target) {
+        if (member === target) return;
+        const merges = getMerges();
+        const leader = leaderOf(target, merges);
+        if (member === leader) return;
+        merges[member] = leader;
+        for (const k of Object.keys(merges)) {
+          if (merges[k] === member) merges[k] = leader;
+        }
+        setMerges(merges);
+      }
+      // Dissolve a whole group: every member of `leader` becomes standalone.
+      function unmergeGroup(leader) {
+        const merges = getMerges();
+        let changed = false;
+        for (const k of Object.keys(merges)) {
+          if (merges[k] === leader) {
+            delete merges[k];
+            changed = true;
+          }
+        }
+        if (changed) setMerges(merges);
+      }
+      // All on-disk keys that render as the card named `leader` (itself first).
+      function membersOf(leader) {
+        const merges = getMerges();
+        const members = [leader];
+        for (const k of Object.keys(merges)) {
+          if (k !== leader && merges[k] === leader) members.push(k);
+        }
+        return members;
+      }
+      // Collapse the raw /v1/projects list into one card per merge group,
+      // preserving first-seen order so the downstream star/cost sort is stable.
+      function mergeGroups(projects) {
+        const merges = getMerges();
+        const groups = new Map();
+        const order = [];
+        for (const p of projects) {
+          const leader = leaderOf(p.name, merges);
+          if (!groups.has(leader)) {
+            groups.set(leader, []);
+            order.push(leader);
+          }
+          groups.get(leader).push(p);
+        }
+        return order.map((leader) => combineProjects(leader, groups.get(leader)));
+      }
+      // Sum the numeric metrics + element-wise daily arrays of a group's
+      // members. Singletons pass through (with a memberNames tag) untouched.
+      function combineProjects(leaderName, members) {
+        if (members.length === 1) {
+          return { ...members[0], name: leaderName, memberNames: [members[0].name] };
+        }
+        const sum = (f) => members.reduce((a, m) => a + (m[f] ?? 0), 0);
+        const sumArrays = (arrs) => {
+          const len = Math.max(0, ...arrs.map((a) => (Array.isArray(a) ? a.length : 0)));
+          const out = Array(len).fill(0);
+          for (const a of arrs) {
+            if (!Array.isArray(a)) continue;
+            for (let i = 0; i < a.length; i++) out[i] += a[i] ?? 0;
+          }
+          return out;
+        };
+        const families = ["opus", "sonnet", "haiku", "other"];
+        const dailyByFamily = {};
+        for (const f of families) {
+          dailyByFamily[f] = sumArrays(members.map((m) => m.dailyByFamily?.[f]));
+        }
+        const outputTokens = sum("outputTokens");
+        const linesAdded = sum("linesAdded");
+        return {
+          name: leaderName,
+          memberNames: members.map((m) => m.name),
+          events: sum("events"),
+          sessions: sum("sessions"),
+          inputTokens: sum("inputTokens"),
+          outputTokens,
+          cacheReadTokens: sum("cacheReadTokens"),
+          cacheCreationTokens: sum("cacheCreationTokens"),
+          costUsd: sum("costUsd"),
+          linesAdded,
+          linesRemoved: sum("linesRemoved"),
+          activeMs: sum("activeMs"),
+          outputPerLine: linesAdded > 0 ? outputTokens / linesAdded : 0,
+          dailyCostUsd: sumArrays(members.map((m) => m.dailyCostUsd)),
+          dailyByFamily,
+        };
+      }
+      // Project being folded into another (merge mode). Session-scoped, like
+      // editingProject: a reload always lands back on plain filter-on-click.
+      let mergingProject = null;
+
       // Project name currently being edited in the rename input. Session-
       // scoped so a reload always lands on the read-only view.
       let editingProject = null;
@@ -1575,7 +1752,11 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         // v0.32.0 — hidden projects move to a separate collapsed group below.
         const starred = getStarred();
         const hidden = getHidden();
-        const ordered = data.projects.slice().sort((a, b) => {
+        // v0.39.0 — collapse merged folders into one card per group before
+        // the star/cost sort and the visible/hidden split. Star, hide,
+        // rename, and filter all key off the group's leader name.
+        const grouped = mergeGroups(data.projects);
+        const ordered = grouped.sort((a, b) => {
           const aStar = starred.has(a.name);
           const bStar = starred.has(b.name);
           if (aStar !== bStar) return aStar ? -1 : 1;
@@ -1604,11 +1785,27 @@ const tagline = "Self-hosted observatory for your AI coding agents";
           const tplLabel = tpl > 0 ? Math.round(tpl) + " tok/ln" : "no lines yet";
           const hideTitle = isHidden ? "Unhide" : "Hide";
           const hideIcon = isHidden ? "↺" : "✕";
+          const memberCount = p.memberNames?.length ?? 1;
+          const isMerged = memberCount > 1;
           const classes = ["project-card"];
           if (isStarred && !isHidden) classes.push("starred");
           if (isHidden) classes.push("is-hidden");
+          if (mergingProject === p.name) classes.push("is-merge-source");
           const display = displayName(p.name);
           const hasAlias = display !== p.name;
+          const mergedBadge = isMerged
+            ? '<span class="project-merged-badge" title="' +
+              escape("Merged: " + p.memberNames.join(", ")) +
+              '">⧉ ' + memberCount + "</span>"
+            : "";
+          const mergeBtn = isMerged
+            ? '<button type="button" class="project-merge" data-unmerge="' +
+              escape(p.name) + '" title="Unmerge ' + memberCount + ' projects">⊟</button>'
+            : '<button type="button" class="project-merge' +
+              (mergingProject === p.name ? " is-active" : "") +
+              '" data-merge="' + escape(p.name) + '" title="' +
+              (mergingProject === p.name ? "Click a target — Esc to cancel" : "Merge into…") +
+              '">⧉</button>';
           const isEditing = editingProject === p.name;
           const nameCell = isEditing
             ? '<input type="text" class="project-rename-input" data-rename-input="' +
@@ -1620,7 +1817,8 @@ const tagline = "Self-hosted observatory for your AI coding agents";
               escape(p.name) + '">' + escape(display) + "</span>" +
               (hasAlias
                 ? '<span class="project-alias-orig">(' + escape(p.name) + ")</span>"
-                : "");
+                : "") +
+              mergedBadge;
           return (
             '<div class="' + classes.join(" ") + '">' +
             '<div class="project-name">' +
@@ -1630,6 +1828,7 @@ const tagline = "Self-hosted observatory for your AI coding agents";
             nameCell +
             '<button type="button" class="project-rename" data-rename="' + escape(p.name) +
             '" title="Rename">✎</button>' +
+            mergeBtn +
             '<button type="button" class="project-hide" data-hide="' + escape(p.name) +
             '" title="' + hideTitle + '">' + hideIcon + "</button>" +
             "</div>" +
@@ -1672,7 +1871,16 @@ const tagline = "Self-hosted observatory for your AI coding agents";
             "</div>" +
             hiddenCards;
         }
-        $("projects").innerHTML = visibleHtml + hiddenHtml;
+        // v0.39.0 — merge-mode hint spans the grid while a merge is armed.
+        const mergeHint =
+          mergingProject !== null
+            ? '<div class="merge-hint">Merging <b>' +
+              escape(displayName(mergingProject)) +
+              "</b> — click a target project to fold it in, or press Esc to cancel." +
+              '<button type="button" id="cancel-merge">Cancel</button></div>'
+            : "";
+        $("projects").innerHTML = mergeHint + visibleHtml + hiddenHtml;
+        $("projects").classList.toggle("merging", mergingProject !== null);
         // v0.30.0 — wire the star toggle. One delegated listener per render
         // is cheaper than per-card listeners and keeps the markup clean.
         $("projects").querySelectorAll(".project-star[data-star]").forEach((btn) => {
@@ -1690,10 +1898,44 @@ const tagline = "Self-hosted observatory for your AI coding agents";
             ev.stopPropagation();
             const name = el.getAttribute("data-project-filter");
             if (!name) return;
+            // v0.39.0 — in merge mode a name-click picks the merge target
+            // instead of drilling in; clicking the source itself cancels.
+            if (mergingProject !== null) {
+              if (name !== mergingProject) mergeInto(mergingProject, name);
+              mergingProject = null;
+              if (lastProjectsData) renderProjects(lastProjectsData);
+              return;
+            }
             setProjectFilter(name);
             reloadDashboard();
           });
         });
+        // v0.39.0 — merge (⧉) arms merge mode; unmerge (⊟) dissolves a group.
+        $("projects").querySelectorAll(".project-merge[data-merge]").forEach((btn) => {
+          btn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            const name = btn.getAttribute("data-merge");
+            if (!name) return;
+            mergingProject = mergingProject === name ? null : name;
+            if (lastProjectsData) renderProjects(lastProjectsData);
+          });
+        });
+        $("projects").querySelectorAll(".project-merge[data-unmerge]").forEach((btn) => {
+          btn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            const name = btn.getAttribute("data-unmerge");
+            if (!name) return;
+            unmergeGroup(name);
+            if (lastProjectsData) renderProjects(lastProjectsData);
+          });
+        });
+        const cancelMerge = document.getElementById("cancel-merge");
+        if (cancelMerge) {
+          cancelMerge.addEventListener("click", () => {
+            mergingProject = null;
+            if (lastProjectsData) renderProjects(lastProjectsData);
+          });
+        }
         // v0.32.0 — hide (✕) / unhide (↺) per-card buttons.
         $("projects").querySelectorAll(".project-hide[data-hide]").forEach((btn) => {
           btn.addEventListener("click", (ev) => {
@@ -2708,6 +2950,12 @@ const tagline = "Self-hosted observatory for your AI coding agents";
         if (!isMetricsTabActive()) return;
         ev.preventDefault();
         $("manual-refresh").click();
+      });
+      // v0.39.0 — Esc cancels an armed project merge.
+      document.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Escape" || mergingProject === null) return;
+        mergingProject = null;
+        if (lastProjectsData) renderProjects(lastProjectsData);
       });
       document.querySelectorAll(".range-tabs button[data-range]").forEach((btn) => {
         btn.addEventListener("click", () => {

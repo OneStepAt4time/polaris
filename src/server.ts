@@ -56,6 +56,19 @@ const IngestBodySchema = z.object({
 
 const RangeSchema = z.enum(["1h", "12h", "today", "7d", "30d", "all"]).default("today");
 
+// v0.39.0: ?project= may be a single key or a comma-separated list (a merged
+// card drills into all of its member folders at once). Returns null when
+// absent, one string for a single project, or an array for a merge group.
+function parseProjectFilter(raw: string | undefined): string | string[] | null {
+  if (typeof raw !== "string" || raw.length === 0) return null;
+  const keys = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (keys.length === 0) return null;
+  return keys.length === 1 ? (keys[0] as string) : keys;
+}
+
 const CreateSessionBodySchema = z.object({
   cwd: z.string().min(1),
   mcpServers: z.array(z.unknown()).optional(),
@@ -353,8 +366,7 @@ export async function buildServer(): Promise<BuildResult> {
     const pricing = loadPricing();
     // v0.31.0: optional ?project=X filter — falls back to the slow JS-path
     // aggregator. Unfiltered requests keep the fast SQL path from v0.24.0.
-    const projectFilter =
-      typeof query.project === "string" && query.project.length > 0 ? query.project : null;
+    const projectFilter = parseProjectFilter(query.project);
     const result = aggregate(db, range, fromMs, toMs, pricing, { projectFilter });
     const prevRange = resolvePreviousRange(range);
     if (prevRange !== null) {
@@ -393,8 +405,7 @@ export async function buildServer(): Promise<BuildResult> {
       });
     }
     const pricing = loadPricing();
-    const projectFilter =
-      typeof query.project === "string" && query.project.length > 0 ? query.project : null;
+    const projectFilter = parseProjectFilter(query.project);
     return reply.send(
       aggregateHeatmap(db, pricing, metricRaw, daysRaw, undefined, { projectFilter }),
     );

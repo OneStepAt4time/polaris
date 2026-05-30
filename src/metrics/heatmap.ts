@@ -40,8 +40,11 @@ export function isHeatmapMetric(value: string): value is HeatmapMetric {
 }
 
 export interface HeatmapOptions {
-  /** v0.31.0: restrict aggregation to events for this project (matches `projectKey`). */
-  projectFilter?: string | null;
+  /**
+   * v0.31.0: restrict aggregation to events for this project (matches `projectKey`).
+   * v0.39.0: an array matches any of its members (merged card drill-in).
+   */
+  projectFilter?: string | string[] | null;
 }
 
 export function aggregateHeatmap(
@@ -53,6 +56,12 @@ export function aggregateHeatmap(
   opts: HeatmapOptions = {},
 ): HeatmapResult {
   const projectFilter = opts.projectFilter ?? null;
+  const keys =
+    projectFilter === null
+      ? null
+      : Array.isArray(projectFilter)
+        ? new Set(projectFilter)
+        : new Set([projectFilter]);
   const clamped = Math.max(1, Math.min(MAX_DAYS, Math.floor(days)));
   const today = new Date(now);
   today.setUTCHours(0, 0, 0, 0);
@@ -60,9 +69,7 @@ export function aggregateHeatmap(
   const fromMs = todayStartMs - (clamped - 1) * DAY_MS;
   const rawEvents = db.getEventsInRange(fromMs, now);
   const events =
-    projectFilter !== null
-      ? rawEvents.filter((e) => projectKey(e.sessionFile) === projectFilter)
-      : rawEvents;
+    keys !== null ? rawEvents.filter((e) => keys.has(projectKey(e.sessionFile))) : rawEvents;
   const dailyValues: number[] = Array(clamped).fill(0);
   const sessionsPerDay = new Map<number, Set<string>>();
 
