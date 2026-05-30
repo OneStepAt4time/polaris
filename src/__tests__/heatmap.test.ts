@@ -144,4 +144,26 @@ describe("aggregateHeatmap", () => {
     const unfiltered = aggregateHeatmap(db, PRICING, "outputTokens", 7, now);
     expect(unfiltered.dailyValues[6]).toBe(1000);
   });
+
+  it("v0.39.0: projectFilter array sums the daily values of every member", () => {
+    insertEvent(db, {
+      sessionFile: "/home/u/.claude/projects/D--polaris/s.jsonl",
+      tsMs: todayStartMs + 1,
+      outputTokens: 100,
+    });
+    insertEvent(db, {
+      sessionFile: "/home/u/.claude/projects/D--polaris-ui/s.jsonl",
+      tsMs: todayStartMs + 2,
+      outputTokens: 50,
+    });
+    insertEvent(db, {
+      sessionFile: "/home/u/.claude/projects/D--aegis/s.jsonl",
+      tsMs: todayStartMs + 3,
+      outputTokens: 900,
+    });
+    const merged = aggregateHeatmap(db, PRICING, "outputTokens", 7, now, {
+      projectFilter: ["D--polaris", "D--polaris-ui"],
+    });
+    expect(merged.dailyValues[6]).toBe(150);
+  });
 });

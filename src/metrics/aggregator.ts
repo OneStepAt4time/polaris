@@ -121,8 +121,12 @@ export interface AggregateOptions {
    * resolves to this project name (via `projectKey()`). Triggers the
    * slower JS-side aggregation path; unfiltered queries keep the fast
    * SQL-pushdown path from v0.24.0.
+   *
+   * v0.39.0: accepts an array of project keys so a merged project card
+   * (multiple on-disk folders shown as one) can drill into all of its
+   * members at once. A single string still filters to one project.
    */
-  projectFilter?: string | null;
+  projectFilter?: string | string[] | null;
 }
 
 export function aggregate(
@@ -222,6 +226,9 @@ export function aggregate(
  * events, filters by `projectKey(sessionFile) === project`, and rolls up
  * the same shape that aggregate() produces. Acceptable cost: a project
  * filter is an explicit user action, not the hot path.
+ *
+ * v0.39.0: `project` may be an array (merged card drill-in) — an event
+ * matches if its project key is any member of the set.
  */
 function aggregateFiltered(
   db: PolarisDb,
@@ -229,11 +236,12 @@ function aggregateFiltered(
   fromMs: number,
   toMs: number,
   pricing: PricingTable,
-  project: string,
+  project: string | string[],
 ): MetricsResult {
+  const keys = Array.isArray(project) ? new Set(project) : new Set([project]);
   const events = db
     .getEventsInRange(fromMs, toMs)
-    .filter((e) => projectKey(e.sessionFile) === project);
+    .filter((e) => keys.has(projectKey(e.sessionFile)));
   const totals: MetricsTotals = {
     events: 0,
     inputTokens: 0,

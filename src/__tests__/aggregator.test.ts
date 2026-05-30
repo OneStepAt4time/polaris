@@ -192,6 +192,49 @@ describe("aggregate", () => {
     expect(r.totals.events).toBe(0);
     expect(r.perModel).toEqual([]);
   });
+
+  it("v0.39.0: projectFilter array sums every member (merged drill-in)", () => {
+    db.insertEvent(
+      sample({
+        requestId: "a",
+        sessionFile: "/u/.claude/projects/D--polaris/s.jsonl",
+        inputTokens: 100,
+        outputTokens: 200,
+      }),
+    );
+    db.insertEvent(
+      sample({
+        requestId: "b",
+        sessionFile: "/u/.claude/projects/D--polaris-ui/s.jsonl",
+        inputTokens: 300,
+        outputTokens: 400,
+      }),
+    );
+    db.insertEvent(
+      sample({
+        requestId: "c",
+        sessionFile: "/u/.claude/projects/D--aegis/s.jsonl",
+        inputTokens: 999,
+        outputTokens: 999,
+      }),
+    );
+    const merged = aggregate(db, "all", 0, Date.now() + 1, pricing, {
+      projectFilter: ["D--polaris", "D--polaris-ui"],
+    });
+    // Two members included, the third (D--aegis) excluded.
+    expect(merged.totals.events).toBe(2);
+    expect(merged.totals.inputTokens).toBe(400);
+    expect(merged.totals.outputTokens).toBe(600);
+    // A one-element array matches the single-string path exactly.
+    const single = aggregate(db, "all", 0, Date.now() + 1, pricing, {
+      projectFilter: "D--polaris",
+    });
+    const oneEl = aggregate(db, "all", 0, Date.now() + 1, pricing, {
+      projectFilter: ["D--polaris"],
+    });
+    expect(oneEl.totals.events).toBe(single.totals.events);
+    expect(oneEl.totals.outputTokens).toBe(single.totals.outputTokens);
+  });
 });
 
 describe("computeActivity (v0.28.0)", () => {
