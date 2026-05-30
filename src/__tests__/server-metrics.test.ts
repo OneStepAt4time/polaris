@@ -123,3 +123,68 @@ describe("GET /v1/metrics", () => {
     expect(body.previous).toBeUndefined();
   });
 });
+
+describe("GET /v1/metrics?project= (v0.39.0 merged drill-in)", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    process.env.POLARIS_AUTH_TOKEN = TOKEN;
+    process.env.POLARIS_DB_PATH = ":memory:";
+    process.env.POLARIS_WATCH_DIR = "";
+    const built = await buildServer();
+    app = built.app;
+    await app.ready();
+
+    const ts = new Date().toISOString();
+    const event = (model: string, input: number, output: number, req: string): string =>
+      `{"timestamp":"${ts}","type":"assistant","message":{"model":"${model}","usage":{"input_tokens":${input},"output_tokens":${output}}},"requestId":"${req}","uuid":"u-${req}"}`;
+    await app.inject({
+      method: "POST",
+      url: "/v1/ingest",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: {
+        sessionFile: "/u/.claude/projects/proj-A/s1.jsonl",
+        content: event("claude-sonnet-4-5", 1000, 500, "req_a1"),
+      },
+    });
+    await app.inject({
+      method: "POST",
+      url: "/v1/ingest",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: {
+        sessionFile: "/u/.claude/projects/proj-B/s2.jsonl",
+        content: event("claude-sonnet-4-5", 2000, 1000, "req_b1"),
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  const get = (project: string) =>
+    app.inject({
+      method: "GET",
+      url: `/v1/metrics?range=all&project=${encodeURIComponent(project)}`,
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+  type Body = { totals: { events: number; inputTokens: number } };
+
+  it("filters to one project for a single key", async () => {
+    const body = (await get("proj-A")).json() as Body;
+    expect(body.totals.events).toBe(1);
+    expect(body.totals.inputTokens).toBe(1000);
+  });
+
+  it("sums every member for a comma-separated key list", async () => {
+    const body = (await get("proj-A,proj-B")).json() as Body;
+    expect(body.totals.events).toBe(2);
+    expect(body.totals.inputTokens).toBe(3000);
+  });
+
+  it("ignores blank entries in the list", async () => {
+    const body = (await get("proj-B, ,")).json() as Body;
+    expect(body.totals.events).toBe(1);
+    expect(body.totals.inputTokens).toBe(2000);
+  });
+});
