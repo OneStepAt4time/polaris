@@ -1,4 +1,10 @@
-import type { Channel, ChannelMessageOptions, ChannelResult, FetchLike } from "./channel.js";
+import {
+  type Channel,
+  type ChannelMessageOptions,
+  type ChannelResult,
+  type FetchLike,
+  postJson,
+} from "./channel.js";
 
 export type { ChannelResult, FetchLike } from "./channel.js";
 
@@ -60,20 +66,7 @@ export async function sendTelegramMessage(
       };
     }
   }
-  try {
-    const res = await fetchImpl(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => "");
-      return { ok: false, status: res.status, error: errBody };
-    }
-    return { ok: true, status: res.status };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
+  return postJson(fetchImpl, url, body);
 }
 
 export function makeTelegramChannel(cfg: TelegramConfig, fetchImpl?: FetchLike): Channel {

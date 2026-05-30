@@ -1,4 +1,4 @@
-import type { Channel, ChannelResult, FetchLike } from "./channel.js";
+import { type Channel, type ChannelResult, type FetchLike, postJson } from "./channel.js";
 
 export interface SlackConfig {
   webhookUrl: string;
@@ -9,20 +9,7 @@ export async function sendSlackMessage(
   text: string,
   fetchImpl: FetchLike = fetch as unknown as FetchLike,
 ): Promise<ChannelResult> {
-  try {
-    const res = await fetchImpl(cfg.webhookUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      return { ok: false, status: res.status, error: body };
-    }
-    return { ok: true, status: res.status };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
+  return postJson(fetchImpl, cfg.webhookUrl, { text });
 }
 
 export function makeSlackChannel(cfg: SlackConfig, fetchImpl?: FetchLike): Channel {
