@@ -33,3 +33,32 @@ export type FetchLike = (
   url: string,
   init: { method: string; headers: Record<string, string>; body: string },
 ) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
+
+/**
+ * Shared JSON POST for every channel adapter (telegram/slack/discord/webhook).
+ * Each adapter builds its own payload shape, then hands it here for the
+ * identical transport + result-mapping tail:
+ *  - POST application/json
+ *  - non-2xx → { ok:false, status, error:<body text> }  (Discord's 204 is 2xx → ok)
+ *  - thrown   → { ok:false, error:<message> }
+ */
+export async function postJson(
+  fetchImpl: FetchLike,
+  url: string,
+  body: unknown,
+): Promise<ChannelResult> {
+  try {
+    const res = await fetchImpl(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "");
+      return { ok: false, status: res.status, error: errBody };
+    }
+    return { ok: true, status: res.status };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
