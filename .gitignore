@@ -144,6 +144,10 @@ vite.config.ts.timestamp-*
 
 # Polaris-specific
 .claude/worktrees/
+# Personal Claude Code config (may hold BYO-LLM tokens) — never commit.
+# The shared .claude/settings.json IS committed; settings.local.json is not.
+.claude/settings.local.json
+.claude/settings.local*
 *.db
 *.db-journal
 *.db-wal
